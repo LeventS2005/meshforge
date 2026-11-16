@@ -21,7 +21,7 @@ import ast
 from pathlib import Path
 
 # Modules that hold meshing/geometry/solve logic — the GUI-agnostic layers
-# (web, desktop shell) may only talk to MeshingSession (rule 4).
+# (web) may only talk to MeshingSession (rule 4).
 FORBIDDEN_MODULES = (
     "meshforge.geometry",
     "meshforge.meshing",
@@ -31,13 +31,11 @@ FORBIDDEN_MODULES = (
 # Entry points of the meshing/export internals; a reference from a UI layer
 # means logic leaked past the service boundary.
 FORBIDDEN_NAMES = (
-    "offset_wall",
     "mesh_wall",
     "get_backend",
     "export_surface",
     "export_abaqus",
     "write_polymesh",
-    "write_fluent",
 )
 # Tails of the forbidden modules, to resolve relative imports from inside
 # the meshforge package ("..geometry" -> meshforge.geometry).

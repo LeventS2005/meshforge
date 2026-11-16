@@ -1,4 +1,4 @@
-"""V4 fix pack: centerline cap extension, tet sliver optimization, pv shim."""
+"""V4 fix pack: centerline cap extension, pv shim."""
 from __future__ import annotations
 
 import math
@@ -77,30 +77,6 @@ def test_swept_curved_extended_zero_inverted() -> None:
     )
     assert wall.quality.n_inverted == 0
     assert wall.quality.sj_min > 0.1
-
-
-# ---------------------------------------------------------------------------
-# fix 2: tet sliver optimization (BACKLOG #2, gmsh-gated)
-
-
-def test_tet_optimize_lifts_sliver_floor() -> None:
-    pytest.importorskip("gmsh")
-    surface, _ = generate("straight_tube")
-    cl = compute_centerline(surface)
-    be = get_backend("tet")
-    raw = be.mesh_wall(surface, 0.6, centerline=cl, n_theta=24, n_axial=30, optimize=False)
-    opt = be.mesh_wall(surface, 0.6, centerline=cl, n_theta=24, n_axial=30)
-
-    assert raw.quality.n_inverted == 0 and opt.quality.n_inverted == 0
-    # Empirical on this fixture: unoptimized 0.102, Netgen-optimized 0.324.
-    # Floor 0.15 fails without optimization and has ~2x headroom with it.
-    assert opt.quality.sj_min >= 0.15, opt.quality.sj_min
-    assert opt.quality.sj_min >= raw.quality.sj_min
-    assert opt.quality.total_volume == pytest.approx(
-        raw.quality.total_volume, rel=0.005
-    )
-    assert any("optimization" in n for n in opt.notes)
-    assert any("disabled" in n for n in raw.notes)
 
 
 # ---------------------------------------------------------------------------

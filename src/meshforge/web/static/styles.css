@@ -1,7 +1,7 @@
 /* meshforge Workbench — desktop-tool chrome.
    Plain CSS, no framework/build step, no external font/asset (the page stays
-   127.0.0.1-only and self-contained; test_help_affordance_is_static_and_local
-   asserts no http/https anywhere in the served page).
+   127.0.0.1-only and self-contained; test_page_is_static_and_local asserts
+   no http/https anywhere in the served page).
 
    Design intent (session 39): this is a meshing/FEA workstation, not a web
    form. The vocabulary is the one every DCC/CAD tool uses — a dark neutral
@@ -101,30 +101,6 @@ body {
   border: 1.5px solid var(--accent); transform: rotate(45deg);
 }
 
-/* Static offline quick-start popover (no links / no fetch — 127.0.0.1-only app). */
-.help { margin-left: auto; position: relative; font-size: 11px; }
-.help > summary {
-  cursor: pointer; list-style: none; height: 20px; padding: 0 9px;
-  display: inline-flex; align-items: center;
-  border: 1px solid var(--bevel); border-radius: 3px;
-  background: linear-gradient(#33363b, #2a2d31);
-  color: var(--ink-dim); user-select: none;
-}
-.help > summary:hover { background: linear-gradient(#3b3f45, #31343a); color: var(--ink); }
-.help > summary::-webkit-details-marker { display: none; }
-.help[open] > summary { color: var(--ink); border-color: var(--accent); background: var(--head-hi); }
-.help-body {
-  position: absolute; right: 0; top: 25px; z-index: 20; width: 23rem;
-  padding: 10px 12px; border: 1px solid var(--edge); border-radius: 3px;
-  background: var(--panel);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, .55), inset 0 1px 0 var(--bevel);
-}
-.help-body ol { margin: 2px 0 6px; padding-left: 16px; }
-.help-body li { margin: 4px 0; }
-.help-body p { margin: 6px 0 0; color: var(--ink-dim); }
-.help-body code { font-family: var(--mono); font-size: 11px; color: var(--ink); }
-.help-body b { color: #e3e6ea; }
-
 /* ---- workbench: three docked columns --------------------------------- */
 #workbench {
   flex: 1 1 auto; min-height: 0;
@@ -146,11 +122,16 @@ body {
   margin: 0; padding: 0 0 var(--pad);
   box-shadow: inset 0 -1px 0 #1a1c1f;
 }
-/* float+width:100% pulls <legend> out of the fieldset's border notch so it
-   can be a full-bleed title bar like every other panel header. */
-.step-box > legend,
+/* step-box is a <details> now (FIX 7: collapsible panels) — no content is
+   rendered while closed, so the box's own bottom padding would be a bare
+   gap under the summary bar with nothing to pad. */
+.step-box:not([open]) { padding-bottom: 0; }
+/* <summary> is a block-level title bar, same look as every other panel
+   header; list-style + the marker rule below strip its native disclosure
+   triangle so our own chevron reads consistently across engines. */
+.step-box > summary,
 .panel-title {
-  float: left; width: 100%; margin: 0;
+  list-style: none; margin: 0;
   height: 23px; padding: 0 var(--pad);
   display: flex; align-items: center; gap: 6px;
   background: linear-gradient(var(--head), #272a2e);
@@ -159,9 +140,17 @@ body {
   font: 600 10.5px/1 var(--ui); letter-spacing: .1em; text-transform: uppercase;
   color: var(--ink-head); user-select: none;
 }
-.panel-title { float: none; font-size: 10.5px; }
+.step-box > summary { cursor: pointer; }
+.step-box > summary::-webkit-details-marker { display: none; }
+.step-box > summary::before {
+  content: "▸"; display: inline-block; width: 8px; flex: 0 0 auto;
+  color: var(--ink-dim); font-size: 9px;
+}
+.step-box[open] > summary::before { content: "▾"; }
+.step-box > summary:hover { color: #e3e6ea; }
+.panel-title { font-size: 10.5px; }
 .dock-panel.flush { padding-bottom: 0; }
-.step-box > *:not(legend) { clear: both; }
+.step-box > *:not(summary) { clear: both; }
 .step-box > .knob:first-of-type { margin-top: var(--pad); }
 .step-box hr {
   border: 0; border-top: 1px solid var(--rule);
@@ -212,8 +201,18 @@ body {
   color: #6f757d; font-size: 10.5px; line-height: 1.35;
 }
 
+/* Inline per-panel error (FIX 7): appears next to the button that caused it,
+   under the .log record of the same thing. Used by the step panels and the
+   session save/load rows. */
+.panel-error {
+  margin: 4px var(--pad) 0; padding: 5px 7px;
+  border: 1px solid #5b2a2e; border-radius: 2px;
+  background: #2a1c1e; color: var(--err);
+  font-size: 10.5px; line-height: 1.4;
+}
+
 /* ---- buttons: flat raised chrome, never a saturated web pill --------- */
-button.run, button.reset, button.browse {
+button.run, button.reset {
   height: var(--row); padding: 0 11px; margin: 0;
   border: 1px solid var(--bevel); border-radius: 3px;
   background: linear-gradient(#34373c, #2a2d31);
@@ -221,12 +220,14 @@ button.run, button.reset, button.browse {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
 }
 button.run:hover:not(:disabled),
-button.reset:hover:not(:disabled),
-button.browse:hover { background: linear-gradient(#3d4148, #33363b); border-color: #4a4e55; }
+button.reset:hover:not(:disabled) { background: linear-gradient(#3d4148, #33363b); border-color: #4a4e55; }
 button.run:active:not(:disabled), button.reset:active:not(:disabled) {
   background: #212428; box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5);
 }
 button.run:disabled { opacity: .4; cursor: default; }
+/* Running state (FIX 5) — the button stays disabled for the request's
+   duration; this just makes that visible instead of looking dead/broken. */
+button.run.busy { opacity: .65; cursor: progress; }
 /* a step panel's own action sits on its trailing edge, dialog-style */
 .step-box > button.run {
   float: right; margin: var(--pad) var(--pad) 0 0;
@@ -238,12 +239,6 @@ button.run:disabled { opacity: .4; cursor: default; }
 .step-box::after { content: ""; display: block; clear: both; }
 button.reset { border-color: #6b3a3e; color: #e59aa1; background: linear-gradient(#40292c, #352225); }
 button.reset:hover { border-color: #8d4a50; color: #f0b3b8; background: linear-gradient(#4d3134, #402729); }
-
-/* Native "Browse…" (desktop shell only); sits under its path field. */
-button.browse {
-  grid-column: 2; justify-self: start; height: 19px;
-  margin: 1px 4px 2px 0; padding: 0 8px; font-size: 10.5px;
-}
 
 /* ---- centre: viewport well ------------------------------------------ */
 .viewport-slot {
@@ -324,7 +319,7 @@ button.browse {
   color: var(--ink); white-space: pre-wrap;
 }
 
-/* ---- right dock: actions / log / history ----------------------------- */
+/* ---- right dock: actions / log ---------------------------------------- */
 .actions { display: flex; flex-direction: column; gap: 5px; padding: var(--pad); }
 .action-row { display: flex; align-items: center; gap: 5px; }
 .action-row input[type="text"] { flex: 1 1 auto; }
@@ -343,33 +338,6 @@ label.inline input[type="checkbox"] { width: 13px; height: 13px; accent-color: v
   color: #a8b0b8; white-space: pre-wrap;
 }
 .log .err { color: var(--err); }
-
-.history { width: 100%; border-collapse: collapse; font-size: 11px; }
-.history th, .history td {
-  border-bottom: 1px solid var(--rule); padding: 3px 7px;
-  text-align: left; vertical-align: top;
-}
-.history th {
-  position: sticky; top: 0; z-index: 1;
-  background: var(--head); border-bottom: 1px solid var(--edge);
-  color: var(--ink-head); font: 600 10px/1.6 var(--ui);
-  letter-spacing: .1em; text-transform: uppercase;
-}
-.history tbody tr:nth-child(even) { background: rgba(255, 255, 255, .022); }
-.history tbody tr:hover { background: rgba(43, 127, 212, .12); }
-/* The step column names one step ("centerline") and must never wrap: the JSON
-   columns' overflow-wrap makes every column's min-content one character, and
-   auto table layout then squeezes this narrow column to "ce nt er li ne"
-   (visible in the README hero shot before session 39). width:1% + nowrap
-   pins it to its natural width; only the JSON cells may break anywhere. */
-.history td.step {
-  white-space: nowrap; width: 1%;
-  font-weight: 600; color: var(--ink); letter-spacing: .01em;
-}
-.history td.mono { font-family: var(--mono); color: var(--ink-dim); overflow-wrap: anywhere; }
-/* auto layout hands the params column almost nothing next to the much longer
-   summary JSON; a floor keeps it readable without pinning either column. */
-.history th:nth-child(2), .history td:nth-child(2) { min-width: 7rem; }
 
 /* ---- status bar ------------------------------------------------------ */
 #statusbar {
@@ -394,3 +362,194 @@ label.inline input[type="checkbox"] { width: 13px; height: 13px; accent-color: v
 .chip.on { color: var(--ok); border-color: #2f5c3b; background: #1c2a20; }
 .status-hint { margin-left: auto; color: #626870; white-space: nowrap; }
 .status-hint code { font-family: var(--mono); color: #7d848d; }
+
+/* ---- cfd flow-ends picker (D80): writes the cfd knobs, nothing else --- */
+.flow-picker {
+  margin: var(--pad) var(--pad) 2px; padding: 0 0 var(--pad);
+  border: 1px solid var(--rule); border-radius: 3px;
+  background: #1f2124;
+}
+.flow-picker .fp-head {
+  padding: 5px var(--pad); color: var(--ink-head);
+  font: 600 10px/1 var(--ui); letter-spacing: .1em; text-transform: uppercase;
+  border-bottom: 1px solid var(--rule);
+}
+.flow-picker .fp-row { display: flex; gap: 6px; padding: var(--pad) var(--pad) 2px; }
+.flow-picker .knob.fp-speed { grid-template-columns: 92px 1fr auto; }
+.flow-picker .fp-unit { color: var(--ink-dim); font: 11px/1 var(--mono); }
+.fp-status, .fp-note, .fp-preview {
+  margin: 3px var(--pad); color: var(--ink-dim);
+  font-size: 10.5px; line-height: 1.4;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.fp-preview { font-family: var(--mono); color: var(--ink); }
+.fp-status.err, .fp-preview.err { color: var(--err); }
+.fp-note { color: var(--warn); }
+#fp-pick[data-armed="1"] {
+  border-color: var(--accent); color: var(--accent-ink);
+  background: linear-gradient(#2f5f8c, #27506f);
+}
+
+/* ---- twin card (M6): the copilot report's header as a docked panel ----
+   The body outline is the report's own SVG (classes only, themed here):
+   dim silhouette, heart + kidneys dashed as "next", the aorta unlit until
+   the first slot fills, then lit red — the one saturated fill in the panel. */
+.twin-panel { --twin-red: #ff5d55; }
+.twin { display: grid; grid-template-columns: 104px 1fr; gap: 10px; padding: 10px var(--pad) 2px; }
+.twin-fig { text-align: center; }
+.tw-svg { width: 96px; height: auto; display: block; margin: 0 auto; }
+.tw-body { fill: #30343a; stroke: #59606a; stroke-width: 1.2; stroke-linejoin: round; }
+.tw-next { fill: rgba(139, 144, 152, .14); stroke: #9aa0a8; stroke-width: 1.3; stroke-dasharray: 3 2; }
+.tw-aorta path { fill: none; stroke: #5d636b; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.tw-aorta ellipse { fill: #5d636b; }
+.twin[data-lit="1"] .tw-aorta path { stroke: var(--twin-red); }
+.twin[data-lit="1"] .tw-aorta ellipse { fill: var(--twin-red); }
+.twin[data-lit="1"] .tw-aorta { filter: drop-shadow(0 0 3px rgba(255, 93, 85, .55)); }
+.twin-modules {
+  list-style: none; margin: 6px 0 0; padding: 0;
+  font-size: 10.5px; line-height: 1.55; color: #7d848d; text-align: left; white-space: nowrap;
+}
+.twin-modules .mod.lit { color: var(--twin-red); font-weight: 600; }
+.twin-slots { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.twin-slots .slot {
+  display: grid; grid-template-columns: 12px 1fr; gap: 5px;
+  padding: 4px 0; border-bottom: 1px solid var(--rule);
+}
+.twin-slots .slot:last-child { border-bottom: 0; }
+.slot-dot { color: #5d636b; font-size: 10px; line-height: 17px; }
+.slot.filled .slot-dot { color: var(--twin-red); }
+.slot-body { min-width: 0; display: flex; flex-direction: column; }
+.slot-head { display: flex; align-items: baseline; gap: 6px; }
+.slot-head b { color: #8b9098; font-size: 11px; font-weight: 600; }
+.slot.filled .slot-head b { color: #e3e6ea; }
+.slot-note { margin-left: auto; color: #6f757d; font-size: 10px; text-align: right; }
+.slot.filled .slot-note { color: var(--warn); }
+.slot-detail { color: #6f757d; font-size: 10.5px; line-height: 1.35; }
+.slot-value { color: var(--ink); font: 600 11px/1.45 var(--mono); overflow-wrap: anywhere; }
+.slot.next { opacity: .75; }
+.twin-foot { margin: 4px var(--pad) 0; color: #626870; font-size: 10px; text-align: right; }
+
+/* ===== The demo layout (D108) =============================================
+   The page is always this layout: index.html sets <body class="demo"> once
+   and every rule below keys off it. */
+
+/* the tabs: only the AAA path's steps stay, each summary bar showing its tab
+   (number · title · hint · state mark) in place of the step's name; the
+   steps without a tab (sac, centerline, lumen, repair) keep no panel on
+   screen. */
+.demo-tab { display: none; }
+body.demo #step-panels > details.step-box { display: none; }
+body.demo #step-panels > details.step-box[data-demo="1"] { display: block; }
+body.demo #step-panels > details.step-box[data-demo="1"] > summary .step-name { display: none; }
+body.demo #step-panels > details.step-box[data-demo="1"] > summary {
+  height: auto; min-height: 23px; padding: 7px var(--pad) 7px 10px;
+  text-transform: none; letter-spacing: .02em; font-size: 12.5px;
+}
+body.demo .demo-tab {
+  display: grid; flex: 1 1 auto; align-items: center; column-gap: 9px; row-gap: 1px;
+  grid-template-columns: 22px 1fr 14px;
+  grid-template-areas: "num title mark" "num hint mark";
+}
+.demo-num {
+  grid-area: num; width: 22px; height: 22px; border-radius: 11px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #2f3338; color: #c9ced5; font: 700 11px/1 var(--ui); letter-spacing: 0;
+  transition: background .2s, color .2s;
+}
+.demo-title { grid-area: title; font-weight: 600; color: #e3e6ea; }
+.demo-hint { grid-area: hint; font: 400 10.5px/1.25 var(--ui); letter-spacing: 0; color: #9aa0a8; }
+.demo-mark { grid-area: mark; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
+.demo-mark::before { content: ""; width: 8px; height: 8px; border-radius: 4px; background: #3a3f46; }
+details.step-box[data-demo-state="running"] .demo-num { background: #ff5d55; color: #fff; }
+details.step-box[data-demo-state="running"] .demo-mark::before { background: #ff5d55; animation: vp-pulse 1s ease-in-out infinite; }
+details.step-box[data-demo-state="failed"] .demo-num { background: #7a2b27; color: #ffd9d6; }
+details.step-box[data-demo-state="failed"] .demo-mark::before { content: "✕"; width: auto; height: auto; border-radius: 0; background: none; color: #ff5d55; font: 700 12px/1 var(--ui); }
+details.step-box[data-demo-state="done"] .demo-num { background: #2f8f5b; color: #fff; }
+details.step-box[data-demo-state="done"] .demo-mark::before { content: "✓"; width: auto; height: auto; border-radius: 0; background: none; color: #5fd08a; font: 700 12px/1 var(--ui); }
+
+/* the result reveal is geometric now (D112, viewport.js): a new artifact is
+   drawn in from the top down, cell by cell; no cover over the canvas */
+.viewport-slot { position: relative; }
+
+/* layer switch (D112): wall stress | blood flow, shown once the session
+   holds both results (app.js). */
+.vp-layer { gap: 0; margin-left: auto; }
+.vp-layer-btn {
+  height: 20px; padding: 0 10px; cursor: pointer;
+  border: 1px solid var(--edge); background: var(--field); color: var(--ink-dim);
+  font: 600 11px/1 var(--ui); letter-spacing: .02em;
+}
+.vp-layer-btn:first-child { border-radius: 10px 0 0 10px; }
+.vp-layer-btn:last-child { border-radius: 0 10px 10px 0; border-left: 0; }
+.vp-layer-btn.on { background: #ff5d55; border-color: #ff5d55; color: #fff; }
+.vp-layer-btn:disabled { opacity: .45; cursor: default; }
+.vp-layer-btn:focus-visible { outline: 2px solid #ff5d55; outline-offset: 1px; }
+
+/* the running step with its elapsed seconds (GET /state `running`) */
+.vp-busy {
+  position: absolute; left: 12px; bottom: 44px; z-index: 6; pointer-events: none;
+  padding: 5px 11px 5px 24px; border-radius: 14px; font-size: 12.5px; color: #f2f3f5;
+  background: rgba(16, 16, 18, .78); border: 1px solid #3a3f46;
+}
+.vp-busy::before {
+  content: ""; position: absolute; left: 10px; top: 50%; width: 8px; height: 8px; margin-top: -4px;
+  border-radius: 4px; background: #ff5d55; animation: vp-pulse 1s ease-in-out infinite;
+}
+.vp-busy[hidden] { display: none; }
+@keyframes vp-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+
+/* patient-atlas panel (above the twin). Two
+   columns: the body map on the left (a bold front-view pictogram, 170 x 330
+   px, 15 regions each its own path, filed by the PATIENT's side), the
+   modality chips, the hover line and the study list on the right; the
+   caption under both. Region states sized for a screen recording: dim =
+   neutral fill with a solid faint outline; lit (has studies) = accent fill,
+   accent outline, an 11 px count badge; hover / keyboard focus = brighter
+   fill and a 1.5 px white outline, plus the region's name on the figure;
+   selected = 2 px accent outline. Strokes are screen pixels (non-scaling). */
+.atlas > .panel-title { height: auto; min-height: 23px; padding-top: 3px; padding-bottom: 3px; line-height: 1.25; }
+.atlas > .panel-title .muted { text-align: right; line-height: 1.2; }
+.atlas .atlas-body { display: grid; grid-template-columns: 175px minmax(0, 1fr); column-gap: 8px; padding: 6px var(--pad) 0; align-items: start; }
+.atlas .atlas-fig { grid-column: 1; }
+.atlas .atlas-side { grid-column: 2; min-width: 0; }
+.atlas .atlas-svg { display: block; width: 170px; height: 330px; overflow: visible; }
+.atlas .atlas-region {
+  fill: rgba(201, 204, 209, .18); stroke: rgba(201, 204, 209, .40); stroke-width: 1px;
+  vector-effect: non-scaling-stroke; cursor: pointer; outline: none;
+  transition: fill .12s, stroke .12s;
+}
+.atlas .atlas-region[data-has="1"] { fill: rgba(255, 93, 85, .40); stroke: #ff5d55; }
+body.demo .atlas .atlas-region:hover,
+body.demo .atlas .atlas-region:focus-visible { fill: rgba(201, 204, 209, .50); stroke: #fff; stroke-width: 1.5px; }
+body.demo .atlas .atlas-region[data-has="1"]:hover,
+body.demo .atlas .atlas-region[data-has="1"]:focus-visible { fill: rgba(255, 93, 85, .65); stroke: #fff; stroke-width: 1.5px; }
+body.demo .atlas .atlas-region.selected { stroke: #ff5d55; stroke-width: 2px; }
+.atlas .atlas-badge circle { fill: #ff5d55; stroke: #1b1c1e; stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.atlas .atlas-badge text { fill: #fff; font: 700 9px var(--ui); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.atlas .atlas-label rect { fill: rgba(16, 16, 18, .92); stroke: #fff; stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.atlas .atlas-label text { fill: #fff; font: 600 11px var(--ui); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.atlas .atlas-chips { display: flex; gap: 5px; flex-wrap: wrap; margin: 0 0 6px; }
+.atlas .atlas-chip {
+  font: inherit; font-size: 10.5px; letter-spacing: .04em; padding: 3px 9px; cursor: pointer;
+  color: #c9ced5; background: #2a2e33; border: 1px solid #3a3f46; border-radius: 12px;
+}
+.atlas .atlas-chip.on { color: #fff; background: #ff5d55; border-color: #ff5d55; }
+.atlas .atlas-hover { margin: 0; min-height: 30px; font-size: 11px; color: #e3e6ea; line-height: 1.35; }
+.atlas .atlas-list-title {
+  margin: 8px 0 2px; font: 600 10.5px/1 var(--ui); letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-head);
+}
+.atlas .atlas-list-title span { text-transform: none; letter-spacing: 0; color: #c9ced5; }
+.atlas .atlas-studies { list-style: none; margin: 0; padding: 0; }
+.atlas .atlas-studies li {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 5px; padding: 4px 0;
+  border-top: 1px solid var(--rule); font-size: 11px; color: var(--ink);
+}
+.atlas .atlas-tag {
+  padding: 1px 6px; border-radius: 3px; background: #2a2e33; border: 1px solid #3a3f46;
+  font: 700 10px/1.4 var(--mono); color: #e3e6ea;
+}
+.atlas .atlas-date, .atlas .atlas-status { color: #9aa0a8; }
+.atlas .atlas-loaded { color: #5fd08a; font-weight: 600; }
+.atlas .atlas-empty { color: #8b9098; font-style: italic; }
+.atlas .atlas-caption { margin: 6px var(--pad) 0; font-size: 10.5px; color: #9aa0a8; line-height: 1.35; }

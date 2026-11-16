@@ -6,8 +6,7 @@ import numpy as np
 import pytest
 import pyvista as pv
 
-from meshforge.geometry import compute_centerline, offset_wall
-from meshforge.geometry.sdf import sdf_offset_surface
+from meshforge.geometry import compute_centerline
 from meshforge.meshing import build_wall_lattice, get_backend
 from meshforge.synth import generate
 
@@ -15,35 +14,6 @@ from meshforge.synth import generate
 # swept wall must invert on the concave side (trap #2: do NOT soften this).
 TIGHT = dict(radius=2.0, bend_radius=4.5, angle=math.pi)
 T_FAT = 3.0
-
-
-def test_sdf_sphere_offset_matches_closed_form() -> None:
-    r, t = 5.0, 0.9
-    sphere = pv.Sphere(radius=r, theta_resolution=80, phi_resolution=80)
-    result = offset_wall(sphere, t)  # sdf is the default mode now
-
-    exact = 4.0 / 3.0 * math.pi * (r + t) ** 3
-    assert result.outer.n_open_edges == 0
-    assert result.outer.volume == pytest.approx(exact, rel=0.025)
-    # Realized thickness reported per inner vertex.
-    assert np.mean(result.thickness) == pytest.approx(t, rel=0.05)
-    assert result.n_capped == 0 and result.n_floored == 0
-    assert any("sdf offset" in n for n in result.notes)
-
-
-def test_sdf_survives_the_tight_bend_watertight() -> None:
-    surface, _ = generate("curved_tube", **TIGHT)
-    outer, _notes = sdf_offset_surface(surface, T_FAT)
-    # Level sets cannot self-intersect: watertight, manifold, volume grows.
-    assert outer.n_open_edges == 0
-    assert outer.is_manifold
-    assert outer.volume > surface.volume
-
-
-def test_sdf_spacing_guard() -> None:
-    surface, _ = generate("straight_tube")
-    with pytest.raises(ValueError, match="voxels across the wall"):
-        sdf_offset_surface(surface, 0.6, spacing=0.5)
 
 
 def test_graded_layers_geometric_progression() -> None:
@@ -87,12 +57,3 @@ def test_lattice_guard_error_branches() -> None:
     with pytest.raises(ValueError, match="floor_frac"):
         build_wall_lattice(surface, 0.5, centerline=cl, floor_frac=0.0)
 
-
-def test_session_wall_default_is_sdf() -> None:
-    from meshforge.pipeline import STEP_KNOBS, MeshingSession
-
-    assert STEP_KNOBS["wall"]["mode"][1] == "sdf"
-    s = MeshingSession()
-    s.generate_synth("straight_tube")
-    result = s.compute_wall(thickness=0.5)
-    assert any("sdf offset" in n for n in result.summary["notes"])

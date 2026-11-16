@@ -7,7 +7,7 @@ does not (sphere, revolution), the truth is the continuous closed form and
 the mesh converges to it (tolerance stated in tests).
 
 ``extrude_loops``/``revolve_loop`` take plain (N, 2) numpy loops — outer CCW,
-holes CW, the same convention ``io.cad.Profile2D`` produces — but this module
+holes CW, the usual 2-D profile convention — but this module
 never imports CAD classes.
 """
 from __future__ import annotations

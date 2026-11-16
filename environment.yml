@@ -1,18 +1,19 @@
 # Create with the libmamba solver (classic is pathologically slow):
 #   conda env create -f environment.yml --solver=libmamba
 #
-# GUI phase (M6) additions must come from conda-forge on macOS, NOT pip
-# (a pip PySide6 bundles a second Qt next to conda's qt6-main -> exit 134):
-#   conda install -n meshforge -c conda-forge pyside6 pyvistaqt
+# This installs the base dependencies only. The demo also needs the extras
+# (see the README):
+#   pip install -e ".[meshing,image,copilot,web]"
+#   conda install -n meshforge -c conda-forge trame-vtk trame-vuetify
 name: meshforge
 channels:
   - conda-forge
-# Bands mirror pyproject.toml (V43, D65). numpy is capped tight because
+# Bands mirror pyproject.toml. numpy is capped tight because
 # vtk<=9.6's numpy_support still assigns ndarray.shape (deprecated NumPy 2.5;
 # the removal hard-breaks VTK) — re-widen only after VTK fixes numpy_support.
 dependencies:
   - python=3.12
-  - pyvista>=0.47,<1   # 0.47+ extract_surface(algorithm=...) used by viewport.py/tet.py; do not pin lower
+  - pyvista>=0.47,<1   # 0.47+ extract_surface(algorithm=...) used by web/viewport.py; do not pin lower
   - vtk>=9.3,<9.7
   - meshio>=5,<6
   - numpy>=1.26,<2.6

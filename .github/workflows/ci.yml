@@ -1,14 +1,12 @@
-# CI — the ungated test suite on every push/PR (V43, D65).
+# CI — the ungated test suite on every push/PR.
 #
-# Solver-gated tests (CalculiX / OpenFOAM / MYSTRAN) skip cleanly when the
-# solvers are absent, as do the DWG tests (dwg2dxf + the untracked user DWG)
-# and the real UCSF cardiac-family tests (external read-only data). What runs
-# here is everything else: the whole core — geometry, meshing, exports,
-# format-level deck golden cards, CSO/DICOM/NIfTI ingest + the adversarial
-# security suites, web API, desktop-shell (Qt-free parts), CLI.
+# Tests that need an external program (TotalSegmentator, CalculiX, OpenFOAM)
+# skip cleanly when it is absent. What runs here is everything else: the
+# geometry and meshing core, the readers and parsers, the web API, the page's
+# asset guards, the copilot's tools, guard and report, and the CLI.
 #
-# The desktop extra (PySide6/QtWebEngine) is deliberately NOT installed: the
-# only tests needing a live Qt window are opt-in (MESHFORGE_LIVE_SHELL=1).
+# The copilot extra (the Anthropic SDK) is NOT installed: no test calls the
+# API, and the copilot's tests stand a fake client in.
 
 name: CI
 
@@ -48,7 +46,7 @@ jobs:
       - name: Install meshforge + extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e .[meshing,cad,recipes,image,web,viewport,dev]
+          pip install -e .[meshing,image,web,viewport,dev]
 
       - name: Run test suite
         run: python -m pytest -q -rs

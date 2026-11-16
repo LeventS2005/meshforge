@@ -17,6 +17,7 @@ VOLUME_RTOL = {
     "tapered_tube": 0.005,
     "constricted_tube": 0.01,
     "torus": 0.01,
+    "aneurysm_tube": 0.005,
 }
 AREA_RTOL = 0.01
 

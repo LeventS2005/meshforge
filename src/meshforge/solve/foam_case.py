@@ -168,8 +168,8 @@ class CfdSpec:
             )
         if self.turbulence not in _TURBULENCE_MODELS:
             raise ValueError(
-                f"unknown turbulence model {self.turbulence!r}; V27 "
-                f"supports {_TURBULENCE_MODELS}"
+                f"unknown turbulence model {self.turbulence!r}; "
+                f"supported: {_TURBULENCE_MODELS}"
             )
         if self.turbulence != "laminar":
             if self.solver != "simpleFoam":
@@ -250,8 +250,8 @@ def read_patch_names(case_dir: str | Path) -> list[str]:
     boundary = Path(case_dir) / "constant" / "polyMesh" / "boundary"
     if not boundary.is_file():
         raise FileNotFoundError(
-            f"no polyMesh boundary file at {boundary} — export the mesh "
-            f"first (save('foam', ...) or the foam command)"
+            f"no polyMesh boundary file at {boundary} — give a complete "
+            f"OpenFOAM case, or export the mesh first with save('foam', ...)"
         )
     names = [
         m.group(1)

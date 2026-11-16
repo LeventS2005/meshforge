@@ -10,6 +10,8 @@ exporter calls) on client-supplied write paths.
 """
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +20,12 @@ from pydantic import BaseModel
 
 from meshforge import __version__
 from meshforge.pipeline import STEP_KNOBS, MeshingSession
-from meshforge.web.schema import build_request_models, drop_unset, schema_json
+from meshforge.web.schema import (
+    build_request_models,
+    drop_unset,
+    schema_json,
+    step_order,
+)
 
 # Compute-layer errors we translate into a loud HTTP 400. Anything else is a
 # genuine bug and is allowed to become a 500 (also loud).
@@ -41,10 +48,19 @@ class _SessionHolder:
     def __init__(self) -> None:
         self.session = MeshingSession()
         self.last_render: dict[str, Any] | None = None
+        # GET /geometry ghosts, serialized once per surface: kind -> (the
+        # surface object it was made from, its vtk.js state). "aorta" is the
+        # session's AI outline, every other key a context organ (the heart).
+        self.ghosts: dict[str, tuple[Any, dict[str, Any]]] = {}
         # Monotonic session revision. Bumped on every state-changing call so a
         # frontend can cheaply poll GET /state and re-sync when ANOTHER client
         # (or a replay) changed the shared in-process session (auto-refresh).
         self.rev = 0
+        # The step running under the session lock right now (its STEP_KNOBS
+        # name) and when it started: GET /state reports both so a Workbench
+        # driven from outside (the copilot over HTTP) can show "meshing… 12 s".
+        self.running: str | None = None
+        self.running_since: float | None = None
 
 
 class SynthBody(BaseModel):
@@ -61,11 +77,54 @@ class WorkfileLoadBody(BaseModel):
     replay: bool = True
 
 
+class PickBody(BaseModel):
+    point: list[float]
+
+
+class InflowBody(BaseModel):
+    patch: str
+    speed: float
+    nu: float
+
+
+class FlowMetricsBody(BaseModel):
+    # any JSON values: the session's own check refuses non-numbers loudly
+    # (pydantic would quietly turn "1.0" or true into a float)
+    metrics: dict[str, Any]
+
+
 def _result_json(result) -> dict[str, Any]:
     """StepResult -> JSON. ``render_hints`` (the pyvista meshes) are **omitted**
     from the step body on purpose — the mesh travels to the viewport over the
     separate binary ``GET /geometry`` endpoint, not in every step response."""
     return {"step": result.step, "summary": result.summary, "text": result.text}
+
+
+#: D112: the results a session holds that the demo's layer switch may show
+#: by name (GET /geometry?artifact=…): the session attribute, the mesh on it,
+#: the label the viewport shows, and the field it opens on when present.
+_HELD_ARTIFACTS: dict[str, tuple[str, str, str, str | None]] = {
+    "stress": ("aaa_stress", "grid", "wall stress (investigational)", None),
+    "cfd": ("cfd", "grid", "cfd results", "p"),
+}
+
+
+def _held_artifact(session: MeshingSession, name: str) -> dict[str, Any] | None:
+    """Render hints for a held result (display only, nothing computed), None
+    when the session has no such result; an unknown name is a loud 400."""
+    spec = _HELD_ARTIFACTS.get(name)
+    if spec is None:
+        raise HTTPException(
+            400, f"unknown artifact {name!r}; one of {', '.join(sorted(_HELD_ARTIFACTS))}")
+    attr, mesh_attr, label, default_field = spec
+    held = getattr(session, attr, None)
+    mesh = getattr(held, mesh_attr, None) if held is not None else None
+    if mesh is None:
+        return None
+    hints: dict[str, Any] = {"mesh": mesh, "kind": "volume", "label": label}
+    if default_field:
+        hints["default_field"] = default_field
+    return hints
 
 
 def _capture(holder: "_SessionHolder", result) -> dict[str, Any]:
@@ -80,14 +139,36 @@ def _capture(holder: "_SessionHolder", result) -> dict[str, Any]:
     return _result_json(result)
 
 
+#: One session, so one compute call at a time (D93). FastAPI runs these sync
+#: handlers in a thread pool; a step and the viewport's GET /geometry ran VTK
+#: on two threads at once, and VTK 9.6.2's Python wrapper map then crashed the
+#: Workbench (vtkPythonUtil::FindObject, on the first demo run). Read-only
+#: polls (/state, /journal, /twin) touch no VTK and stay outside the lock.
+_SESSION_LOCK = threading.RLock()
+
+
 def _run(work):
-    """Run ``work`` mapping compute-layer domain errors to a loud HTTP 400."""
+    """Run ``work`` under the session lock, mapping compute-layer domain errors
+    to a loud HTTP 400."""
     try:
-        return work()
+        with _SESSION_LOCK:
+            return work()
     except HTTPException:
         raise
     except _DOMAIN_ERRORS as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _clean_path(raw: str) -> str:
+    """Same path normalisation the session applies (core helper, rule 4).
+
+    The guard below must see the EXACT path the session will write, so a
+    ``~``/quoted/escaped work-file path is cleaned here too
+    rather than being guarded in one form and written in another.
+    """
+    from meshforge.io.paths import normalize_path_str
+
+    return normalize_path_str(raw)
 
 
 def _guard_write(session: MeshingSession, path: str | Path) -> None:
@@ -167,7 +248,12 @@ def create_app() -> FastAPI:
         # Synth shape names for the frontend's source dropdown. The web layer
         # never imports the synth package (rule 4) -> it asks the session,
         # which owns the catalog (MeshingSession.available_shapes()).
-        return {"shapes": holder.session.available_shapes()}
+        # ``step_order`` is the explicit panel order the Workbench lays out
+        # (pipeline.STEP_ORDER) — imports first, then the processing steps.
+        return {
+            "shapes": holder.session.available_shapes(),
+            "step_order": step_order(),
+        }
 
     @app.get("/journal")
     def get_journal():
@@ -176,8 +262,15 @@ def create_app() -> FastAPI:
     @app.get("/state")
     def get_state():
         s = holder.session
+        running_for = (
+            round(time.monotonic() - holder.running_since, 1)
+            if holder.running is not None and holder.running_since is not None
+            else None
+        )
         return {
             "rev": holder.rev,
+            "running": holder.running,
+            "running_for": running_for,
             "input_path": str(s.input_path) if s.input_path else None,
             "input_sha256": s.input_sha256,
             "journal_len": len(s.journal),
@@ -186,15 +279,61 @@ def create_app() -> FastAPI:
                 for name in (
                     "surface",
                     "centerline",
-                    "sections",
-                    "wall",
                     "volmesh",
-                    "solve",
+                    "aaa_stress",
                     "cfd",
-                    "profile",
                 )
             },
         }
+
+    # -- twin card (M6): the copilot report's header, as a Workbench panel --
+    # Read-only and VTK-free, so it stays outside the session lock like
+    # /state: the journaled step summaries are replayed through the copilot's
+    # own tool code, so the panel quotes exactly the copilot's numbers.
+    @app.get("/twin")
+    def get_twin():
+        from meshforge.copilot.report import twin_from_journal
+
+        return twin_from_journal(list(holder.session.journal))
+
+    # -- patient atlas (D108 addendum 6): the body regions and the studies --
+    # the session really holds (meshforge.atlas; at most the CT the segment
+    # step loaded). Read-only and VTK-free (session attributes only), so it
+    # stays outside the session lock like /state and /twin.
+    @app.get("/atlas")
+    def get_atlas():
+        from meshforge.atlas import atlas_for
+
+        return atlas_for(holder.session)
+
+    # The copilot's --flow-metrics over --server: the session journals the
+    # pre-computed CFD numbers as their own flow_metrics record (nothing is
+    # computed, no VTK), so GET /twin and the report print the same flow
+    # lines. A journal write: it takes the session lock and bumps the
+    # revision like every step, so the panel repaints on its next poll.
+    @app.post("/twin/flow")
+    def twin_flow(body: FlowMetricsBody):
+        return _run(
+            lambda: _capture(holder, holder.session.attach_flow_metrics(body.metrics))
+        )
+
+    # -- cfd inflow picker + presets (D80) --------------------------------
+    # Read-only queries: nothing is journaled and the revision is not bumped.
+    # The frontend writes their answers into the cfd knobs' scalar form, so
+    # the recorded step (and its replay) never depends on these routes.
+    @app.post("/cfd/pick")
+    def cfd_pick(body: PickBody):
+        return _run(lambda: holder.session.flow_ends(body.point))
+
+    @app.post("/cfd/inflow")
+    def cfd_inflow(body: InflowBody):
+        return _run(
+            lambda: holder.session.inflow_preview(body.patch, body.speed, body.nu)
+        )
+
+    @app.get("/cfd/presets")
+    def cfd_presets():
+        return _run(holder.session.cfd_presets)
 
     @app.post("/workfile/save")
     def workfile_save(body: PathBody):
@@ -202,7 +341,7 @@ def create_app() -> FastAPI:
 
         def work():
             # Guard the ACTUAL output path (save_workfile forces .mfwork).
-            out = Path(body.path)
+            out = Path(_clean_path(body.path))
             if out.suffix != ".mfwork":
                 out = out.with_suffix(".mfwork")
             _guard_write(session, out)
@@ -219,6 +358,7 @@ def create_app() -> FastAPI:
             loaded = load_workfile(body.path)
             results = replay(loaded) if body.replay else []
             holder.session = loaded  # only after a clean load+replay
+            holder.ghosts = {}
             holder.rev += 1
             # Show the replayed artifact in the viewport: cache the last result
             # that carries a mesh (fall back to clearing if the replay was empty).
@@ -238,6 +378,7 @@ def create_app() -> FastAPI:
     def session_reset():
         holder.session = MeshingSession()
         holder.last_render = None
+        holder.ghosts = {}
         holder.rev += 1
         return {"ok": True}
 
@@ -251,24 +392,53 @@ def create_app() -> FastAPI:
     # client path, no upload, no write, no WebSocket. The one display module
     # (web/viewport.py) is lazy-imported so the base layer stays trame-free.
     @app.get("/geometry")
-    def get_geometry(field: str | None = None):
+    def get_geometry(field: str | None = None, artifact: str | None = None):
         from fastapi.responses import Response
 
-        hints = holder.last_render
+        # D112: `artifact` asks for a result the session HOLDS (the wall
+        # stress, the CFD) instead of the artifact rendered last, so the
+        # demo's layer switch can show either without recomputing anything;
+        # 404 when the session has no such result, 400 for an unknown name.
+        hints = _held_artifact(holder.session, artifact) if artifact else holder.last_render
         if not hints or hints.get("mesh") is None:
+            if artifact:
+                raise HTTPException(404, f"the session holds no {artifact} result yet")
             return Response(status_code=204)  # nothing rendered yet
 
         def work():
             from meshforge.web import viewport
 
+            chosen = field
+            # A CFD result seen from outside (no flow section to look into)
+            # opens on the pressure: the lumen wall's no-slip velocity is
+            # zero, so |U| paints it one colour. With a section the flow
+            # inside is the point, and the first field (U) stays the default.
+            default_field = hints.get("default_field") or (
+                "p" if hints.get("label") == "cfd results" and hints.get("section") is None else None)
+            if chosen is None and default_field:
+                shown = viewport.available_fields(
+                    viewport._renderable(hints["mesh"], hints.get("kind", "surface")))
+                if default_field in shown:
+                    chosen = default_field
             payload = viewport.serialize(
-                hints["mesh"], hints.get("kind", "surface"), field
+                hints["mesh"], hints.get("kind", "surface"), chosen,
+                section=hints.get("section"),
             )
+            if hints.get("view_dir") is not None:
+                payload["view_dir"] = list(hints["view_dir"])
+            if hints.get("label") == "cfd results" and hints.get("section") is None and payload.get("field"):
+                # the flow seen from outside: the inlet's stagnation pins the
+                # full range and paints the lumen one colour; a robust range
+                # (2nd-98th percentile, display only) shows the gradient
+                robust = viewport.robust_range(hints["mesh"], hints.get("kind", "volume"), payload["field"])
+                if robust:
+                    payload["data_range"] = robust
+                    payload["range_note"] = "2nd–98th percentile"
             frames = hints.get("frames")
             payload["label"] = hints.get("label")
             payload["n_frames"] = len(frames) if frames else 0
             payload["times"] = [float(t) for t, _ in frames] if frames else []
-            # QC overlay (e.g. import_cso's raw contour polylines): already
+            # QC overlay (e.g. the crop step's segment centreline): already
             # built by the step — serialized here, painted client-side.
             overlay = hints.get("overlay")
             if overlay is not None:
@@ -276,6 +446,32 @@ def create_app() -> FastAPI:
                     "state": viewport.serialize_overlay(overlay),
                     "label": hints.get("overlay_label"),
                 }
+            # The ghosts: the session's AI outline of the whole aorta (kept by
+            # the segment step after the sac/crop steps replace the working
+            # surface), behind every artifact cut from it — not behind itself
+            # — and the context organs of the same run (the patient's own
+            # heart, D108 addendum 7), whenever the session holds them. Each
+            # is serialized once per surface object (the outline is the
+            # biggest mesh in the session) and reused until it changes.
+            outline = getattr(holder.session, "outline", None)
+            context = getattr(holder.session, "context", None) or {}
+            current: dict[str, Any] = {"aorta": outline}
+            current.update((str(k), v) for k, v in context.items() if v is not None)
+            # drop cache entries whose surface left the session (a new source, a reset)
+            for stale in [k for k, (obj, _) in holder.ghosts.items() if current.get(k) is not obj]:
+                del holder.ghosts[stale]
+            wanted: list[tuple[str, Any]] = []
+            if outline is not None and hints["mesh"] is not outline:
+                wanted.append(("aorta", outline))
+            wanted.extend((k, v) for k, v in current.items() if k != "aorta")
+            ghosts = []
+            for kind, surf in wanted:
+                cached = holder.ghosts.get(kind)
+                if cached is None or cached[0] is not surf:
+                    cached = (surf, viewport.serialize_ghost(surf))
+                    holder.ghosts[kind] = cached
+                ghosts.append({"state": cached[1], "label": f"AI outline · {kind}", "kind": kind})
+            payload["ghost"] = ghosts or None
             return payload
 
         return _run(work)
@@ -295,7 +491,11 @@ def create_app() -> FastAPI:
             from meshforge.web import viewport
 
             t, mesh = frames[index]
-            payload = viewport.serialize(mesh, hints.get("kind", "volume"), field)
+            # One section for every frame: same mesh, new field values.
+            payload = viewport.serialize(
+                mesh, hints.get("kind", "volume"), field,
+                section=hints.get("section"),
+            )
             payload["time"] = float(t)
             payload["index"] = index
             return payload
@@ -330,7 +530,15 @@ def create_app() -> FastAPI:
     static_dir.mkdir(parents=True, exist_ok=True)
     from fastapi.staticfiles import StaticFiles
 
-    app.mount("/app", StaticFiles(directory=static_dir, html=True), name="app")
+    class _RevalidatingStatic(StaticFiles):
+        # The Workbench assets change with every upgrade; without this header
+        # browsers heuristically keep running a stale app.js (seen live, s44).
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.mount("/app", _RevalidatingStatic(directory=static_dir, html=True), name="app")
     return app
 
 
@@ -344,11 +552,12 @@ def _make_step_endpoint(holder: _SessionHolder, step: str, model: type):
 
         def work():
             params = drop_unset(body.model_dump())
-            # screenshot writes a client-supplied path -> reuse the guard.
-            if step == "screenshot" and params.get("path"):
-                _guard_write(session, params["path"])
             method = getattr(session, f"compute_{step}")
-            return _capture(holder, method(**params))
+            holder.running, holder.running_since = step, time.monotonic()
+            try:
+                return _capture(holder, method(**params))
+            finally:
+                holder.running, holder.running_since = None, None
 
         return _run(work)
 

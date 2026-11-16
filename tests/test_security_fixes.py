@@ -7,17 +7,11 @@ environment — not the user's own CLI args.
 """
 from __future__ import annotations
 
-import json
 
 import numpy as np
 import pytest
 
-from meshforge.meshing import (
-    build_block_mesh,
-    extrude_blocks,
-    split_boundary_group,
-    valid_group_name,
-)
+from meshforge.meshing import split_boundary_group, valid_group_name
 
 # A group name carrying a newline that forges a CalculiX *CLOAD card — the
 # canonical F1 injection payload.
@@ -25,14 +19,17 @@ EVIL_NAME = "lid\n*CLOAD\n1,1,1.0e30"
 
 
 def _cavity_wall(n: int = 4):
-    """Unit-square cavity, one cell thick, rim split into lid + walls."""
-    loop = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
-    bm = build_block_mesh([loop], target_size=1.0 / n)
-    wall = extrude_blocks(bm, thickness=0.1, n_layers=1)
-    split_boundary_group(
-        wall, "outer_rim", axis="y", threshold=1.0 - 1e-9, name="lid"
+    """A small swept tube wall (kept backend): the host mesh for the
+    group-name tests, with an ``outer`` group to split a ``lid`` out of."""
+    from meshforge.geometry import compute_centerline
+    from meshforge.meshing import get_backend
+    from meshforge.synth import generate
+
+    surface, _ = generate("straight_tube")
+    cl = compute_centerline(surface)
+    return get_backend("swept").mesh_wall(
+        surface, 0.3, centerline=cl, n_theta=12, n_axial=n
     )
-    return wall
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +104,7 @@ def test_split_boundary_group_refuses_newline_name():
     wall = _cavity_wall()
     with pytest.raises(ValueError, match="invalid boundary-group name"):
         split_boundary_group(
-            wall, "outer_rim", axis="y", threshold=1e-9, name=EVIL_NAME,
+            wall, "outer", axis="z", threshold=1e-9, name=EVIL_NAME,
             side="below",
         )
     assert EVIL_NAME not in wall.boundary  # nothing was written
@@ -122,36 +119,6 @@ def test_boundary_group_constructor_backstop():
             cell_ids=np.array([0], dtype=np.int64),
             face_nodes=np.array([[0, 1, 2, 3]], dtype=np.int64),
         )
-
-
-def test_workfile_split_patch_injection_refused(tmp_path):
-    # (b) The crafted-input path. load_workfile validates the step NAME and
-    # that params is a mapping — but NOT the param VALUES; that gap is what
-    # lets a hand-edited .mfwork carry a forged split_patch name. The mint-
-    # site validator now refuses it on replay instead of producing an
-    # injected deck.
-    from meshforge.pipeline import load_workfile, replay
-
-    journal = [
-        {
-            "step": "split_patch",
-            "params": {
-                "group": "outer_rim", "axis": "y", "threshold": 1e-9,
-                "name": EVIL_NAME, "side": "below",
-            },
-        }
-    ]
-    wf = tmp_path / "evil.mfwork"
-    wf.write_text(json.dumps({"version": 1, "journal": journal}))
-
-    # load_workfile still accepts the crafted step (proving the value gap the
-    # audit flagged) — the defense is at the mint site, on replay.
-    session = load_workfile(wf)
-    assert session.journal[0]["params"]["name"] == EVIL_NAME
-
-    session.volmesh = _cavity_wall()  # the upstream mesh split_patch needs
-    with pytest.raises(ValueError, match="invalid boundary-group name"):
-        replay(session)
 
 
 def test_cfd_spec_refuses_injected_patch_name():
@@ -203,31 +170,6 @@ def test_dat_parser_error_message_is_terminal_safe():
         parse_eigenfrequencies(crafted)
     msg = str(exc.value)
     assert "\x1b" not in msg and "\x07" not in msg  # no raw escape bytes
-
-
-# ---------------------------------------------------------------------------
-# F3 (LOW) — dwg2dxf hang / DoS on a malformed DWG
-
-
-def test_dwg2dxf_timeout_is_loud(monkeypatch):
-    # A malformed/adversarial .dwg that drives LibreDWG into a hang must not
-    # hang meshforge forever: the call is now capped at 120s and a timeout
-    # raises a clear RuntimeError naming the file.
-    import subprocess
-    from pathlib import Path
-
-    from meshforge.io import cad
-
-    monkeypatch.setattr(cad.shutil, "which", lambda _name: "/usr/bin/dwg2dxf")
-
-    def fake_run(argv, **kwargs):
-        assert kwargs.get("timeout") == 120  # the cap is actually wired
-        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
-
-    monkeypatch.setattr(cad.subprocess, "run", fake_run)
-
-    with pytest.raises(RuntimeError, match=r"exceeded the 120s timeout on evil\.dwg"):
-        cad._open_document(Path("evil.dwg"), [], {})
 
 
 # ---------------------------------------------------------------------------

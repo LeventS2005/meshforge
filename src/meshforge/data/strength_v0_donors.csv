@@ -1,0 +1,9 @@
+case,age_years,sex,aneurysm_shape,max_transverse_diameter_cm,n_strips_rupture_border,n_strips_control,source_file,source_sheet,source_cells,dataset_doi,licence
+A,73,male,fusiform,6,2,2,General info /Donors Demographic information.xlsx,Sheet1,A2:E2,10.17632/x64srrc39p.3,CC BY 4.0
+B,77,female,fusiform,4.9,2,2,General info /Donors Demographic information.xlsx,Sheet1,A3:E3,10.17632/x64srrc39p.3,CC BY 4.0
+C,78,male,fusiform,6.4,0,0,General info /Donors Demographic information.xlsx,Sheet1,A4:E4,10.17632/x64srrc39p.3,CC BY 4.0
+D,78,male,fusiform,3.1,2,2,General info /Donors Demographic information.xlsx,Sheet1,A5:E5,10.17632/x64srrc39p.3,CC BY 4.0
+E,80,female,fusiform,3.2,2,3,General info /Donors Demographic information.xlsx,Sheet1,A6:E6,10.17632/x64srrc39p.3,CC BY 4.0
+F,87,male,fusiform,6.6,1,0,General info /Donors Demographic information.xlsx,Sheet1,A7:E7,10.17632/x64srrc39p.3,CC BY 4.0
+G,90+,female,saccular,2.8,2,0,General info /Donors Demographic information.xlsx,Sheet1,A8:E8,10.17632/x64srrc39p.3,CC BY 4.0
+H,90+,female,saccular,2.7,2,2,General info /Donors Demographic information.xlsx,Sheet1,A9:E9,10.17632/x64srrc39p.3,CC BY 4.0

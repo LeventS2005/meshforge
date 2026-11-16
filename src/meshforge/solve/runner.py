@@ -135,8 +135,10 @@ def solve_deck(
     *,
     ccx: str | None = None,
     timeout: float = 600.0,
+    read_elements: bool = True,
 ) -> SolveResult:
-    """Run CalculiX on ``deck`` and read the results back."""
+    """Run CalculiX on ``deck`` and read the results back. ``read_elements``
+    False reads the .frd's nodal fields only (``read_frd(elements=False)``)."""
     deck = Path(deck)
     if not deck.is_file():
         raise FileNotFoundError(f"deck not found: {deck}")
@@ -194,7 +196,7 @@ def solve_deck(
             dat_path = out_dir / dat_src.name
             shutil.copyfile(dat_src, dat_path)
 
-    model = read_frd(frd_path)
+    model = read_frd(frd_path, elements=read_elements)
     notes = list(model.notes)
     u_max = mises_max = None
     disp = model.fields.get("DISP")

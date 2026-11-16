@@ -18,11 +18,52 @@ the V5 lattice, so elliptic smoothing refuses it loudly.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from meshforge.io.cad import _signed_area
-from meshforge.meshing.blocks import BlockMesh2D
+
+def _signed_area(loop: np.ndarray) -> float:
+    x, y = loop[:, 0], loop[:, 1]
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+
+@dataclass
+class BlockMesh2D:
+    """Structured multi-block quad mesh on the global fine lattice.
+
+    The lattice fields (node_id grid, fine ticks, coarse->fine maps, active
+    mask, source loops) let the V6 projection method re-blend block
+    interiors by TFI after boundary nodes move.
+    """
+
+    points: np.ndarray  # (N, 2)
+    quads: np.ndarray  # (M, 4) CCW
+    block_of: np.ndarray  # (M,) coarse block id per quad
+    n_blocks: int
+    edge_groups: dict[str, np.ndarray]  # name -> (k, 2) node-id edges
+    node_id: np.ndarray  # (nfx, nfy) global node ids, -1 where unused
+    first_fx: np.ndarray  # coarse tick k -> fine index of xs[k]
+    first_fy: np.ndarray
+    active: np.ndarray  # (n_coarse_x, n_coarse_y) material blocks
+    loops: list[np.ndarray] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def quad_scaled_jacobians(points: np.ndarray, quads: np.ndarray) -> np.ndarray:
+    """Per-quad min corner scaled Jacobian (2-D); negative = inverted."""
+    p = points[quads]  # (M, 4, 2)
+    sj = np.full(len(quads), np.inf)
+    for k in range(4):
+        e1 = p[:, (k + 1) % 4] - p[:, k]
+        e2 = p[:, (k - 1) % 4] - p[:, k]
+        cross = e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]
+        n1 = np.linalg.norm(e1, axis=1)
+        n2 = np.linalg.norm(e2, axis=1)
+        denom = np.where((n1 > 0) & (n2 > 0), n1 * n2, 1.0)
+        corner = np.where((n1 > 0) & (n2 > 0), cross / denom, -1.0)
+        sj = np.minimum(sj, corner)
+    return sj
 
 
 def _polygon_centroid(loop: np.ndarray) -> np.ndarray:
@@ -235,8 +276,6 @@ def ogrid_disk(
         outer_rim.extend((int(ring[a, n_r]), int(ring[a + 1, n_r])) for a in range(n_t))
 
     quads_arr = np.asarray(quads, dtype=np.int64)
-
-    from meshforge.meshing.project import quad_scaled_jacobians
 
     sj = quad_scaled_jacobians(points, quads_arr)
     n_inverted = int((sj <= 0).sum())

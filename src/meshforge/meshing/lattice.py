@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pyvista as pv
@@ -27,6 +28,14 @@ class WallLattice:
     n_floored: int
     notes: list[str]
     closed_s: bool = False  # periodic in s (closed centerline loop, V9)
+    # D87: how the stations were laid out — "centreline" (rays square to a
+    # centreline, this module) or "planes" (meshing/planes.py: sections of
+    # planes parallel to two flat caps); ``fold_number`` = max r·κ·cosα of
+    # the centreline lattice's own rays (>= 1: the ray fan crosses itself);
+    # ``info`` carries the plane sweep's own counts.
+    sweep: str = "centreline"
+    fold_number: float | None = None
+    info: dict[str, Any] = field(default_factory=dict)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -44,8 +53,8 @@ class WallLattice:
         """Watertight triangulated boundary of the wall solid.
 
         Returns (points, triangles, patch_labels) with labels
-        0=inner, 1=outer, 2=inlet, 3=outlet — the tet backend meshes this
-        shell directly (no reparametrization) and reuses the labels to
+        0=inner, 1=outer, 2=inlet, 3=outlet — a volume mesher can mesh this
+        shell directly (no reparametrization) and reuse the labels to
         classify its own boundary faces.
         """
         s, t, layers = self.shape
@@ -137,7 +146,7 @@ def build_wall_lattice(
         raise ValueError(f"floor_frac must be in (0,1], got {floor_frac}")
     if centerline is None:
         # V40: reuse a centerline embedded in the surface (e.g. the interior
-        # contour centerline chosen by import_cso's auto strategy) before falling
+        # contour centerline of an imported contour set) before falling
         # back to recomputing the skeleton centerline.
         from meshforge.geometry import centerline_from_surface, compute_centerline
 
@@ -207,6 +216,7 @@ def build_wall_lattice(
         kvec = np.gradient(tangents, axis=0) / ds[:, None]
     kappa = np.linalg.norm(kvec, axis=1)
     n_capped = 0
+    fold_number = 0.0
     for i in range(s_count):
         if kappa[i] < 1e-12:
             continue
@@ -215,6 +225,9 @@ def build_wall_lattice(
         risky = cos_a > 1e-9
         if not risky.any():
             continue
+        fold_number = max(
+            fold_number, float((inner_radii[i, risky] * kappa[i] * cos_a[risky]).max())
+        )
         rho_max = curvature_cap / (kappa[i] * cos_a[risky])
         allowed = np.maximum(rho_max - inner_radii[i, risky], 0.0)
         capped_here = t_field[i, risky] > allowed
@@ -263,4 +276,5 @@ def build_wall_lattice(
         n_floored=n_floored,
         notes=notes,
         closed_s=closed_s,
+        fold_number=fold_number,
     )

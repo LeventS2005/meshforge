@@ -351,12 +351,230 @@ def torus(
     return surface, truth
 
 
+def aneurysm_radius(
+    s,
+    *,
+    radius: float = 10.0,
+    sac_radius: float = 25.0,
+    sac_center: float = 60.0,
+    sac_sigma: float = 15.0,
+    flare: float = 4.0,
+    flare_length: float = 6.0,
+):
+    """Exact radius profile of :func:`aneurysm_tube` at arc length ``s``.
+
+    r(s) = radius + (sac_radius − radius)·exp(−(s − sac_center)²/(2σ²))
+    + flare·exp(−s/flare_length): a fusiform Gaussian sac on a straight
+    calibre, plus a flare that widens the caudal end (s = 0) like the
+    approach to an aortic bifurcation.
+    """
+    s = np.asarray(s, dtype=float)
+    sac = (sac_radius - radius) * np.exp(-((s - sac_center) ** 2) / (2.0 * sac_sigma**2))
+    return radius + sac + flare * np.exp(-s / flare_length)
+
+
+def aneurysm_tube(
+    *,
+    radius: float = 10.0,
+    sac_radius: float = 25.0,
+    sac_center: float = 60.0,
+    sac_sigma: float = 15.0,
+    flare: float = 4.0,
+    flare_length: float = 6.0,
+    length: float = 160.0,
+    bend_radius: float = 0.0,
+    n_theta: int = 64,
+    n_axial: int = 161,
+    n_truth: int = 4001,
+) -> tuple[pv.PolyData, AnalyticTruth]:
+    """Capped tube with a fusiform aneurysm sac, a neck and a flared caudal end.
+
+    Millimetre-scale defaults: a 20 mm calibre with a 50 mm sac centred
+    60 mm above the flared (28 mm) caudal end, then a 20 mm neck up to the
+    proximal cap at 160 mm — a synthetic infrarenal AAA with KNOWN landmarks
+    (radius profile :func:`aneurysm_radius`). ``bend_radius`` > 0 sweeps the
+    centreline along a circular arc in the x–z plane (a gently curved aorta;
+    0 = straight along +z). s = 0 is the caudal (lowest-z) end either way.
+
+    Volume truth is a dense quadrature of π r(s)² ds — exact for a tube of
+    circular sections centred on its centreline (Pappus, section by section).
+    """
+    _validate(
+        n_theta, n_axial, radius=radius, sac_radius=sac_radius,
+        sac_sigma=sac_sigma, length=length, flare_length=flare_length,
+    )
+    if flare < 0:
+        raise ValueError(f"flare must be >= 0, got {flare}")
+    if not 0.0 <= sac_center <= length:
+        raise ValueError(f"sac_center must lie in [0, length], got {sac_center}")
+    profile = {
+        "radius": radius, "sac_radius": sac_radius, "sac_center": sac_center,
+        "sac_sigma": sac_sigma, "flare": flare, "flare_length": flare_length,
+    }
+    r_peak = float(aneurysm_radius(np.linspace(0.0, length, 4001), **profile).max())
+    if bend_radius < 0:
+        raise ValueError(f"bend_radius must be >= 0 (0 = straight), got {bend_radius}")
+    if bend_radius and r_peak >= bend_radius:
+        raise ValueError(
+            f"the widest section (radius {r_peak:.4g}) must be < bend_radius "
+            f"({bend_radius}); the concave wall would self-intersect"
+        )
+
+    def frames(s: np.ndarray):
+        if not bend_radius:
+            centers = np.column_stack([np.zeros_like(s), np.zeros_like(s), s])
+            tangents = np.tile([0.0, 0.0, 1.0], (len(s), 1))
+            normals = np.tile([1.0, 0.0, 0.0], (len(s), 1))
+            binormals = np.tile([0.0, 1.0, 0.0], (len(s), 1))
+            return centers, tangents, normals, binormals
+        phi = s / bend_radius
+        centers = np.column_stack(
+            [bend_radius * (1.0 - np.cos(phi)), np.zeros_like(phi), bend_radius * np.sin(phi)]
+        )
+        tangents = np.column_stack([np.sin(phi), np.zeros_like(phi), np.cos(phi)])
+        # n × b = t (outward winding, as in curved_tube)
+        normals = np.column_stack([np.cos(phi), np.zeros_like(phi), -np.sin(phi)])
+        binormals = np.tile([0.0, 1.0, 0.0], (len(s), 1))
+        return centers, tangents, normals, binormals
+
+    s = np.linspace(0.0, length, n_axial)
+    centers, _, n, b = frames(s)
+    surface = _lattice_tube(centers, n, b, aneurysm_radius(s, **profile), n_theta)
+
+    st = np.linspace(0.0, length, n_truth)
+    centers_t, tangents_t, _, _ = frames(st)
+    radii_t = aneurysm_radius(st, **profile)
+    truth = AnalyticTruth(
+        shape="aneurysm_tube",
+        params={**profile, "length": length, "bend_radius": bend_radius,
+                "n_theta": n_theta, "n_axial": n_axial},
+        points=centers_t,
+        tangents=tangents_t,
+        radii=radii_t,
+        arc_lengths=st,
+        length=length,
+        closed=False,
+        surface_area=None,
+        volume=float(np.trapezoid(math.pi * radii_t**2, st)),
+        notes=["volume is dense numeric quadrature of the exact profile (not mesh-derived)"],
+    )
+    return surface, truth
+
+
+def _smoothstep(x):
+    x = np.clip(np.asarray(x, dtype=float), 0.0, 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def eccentric_sac_profile(
+    z,
+    *,
+    length: float = 60.0,
+    sac_radius: float = 30.0,
+    neck_radius: float = 12.0,
+    shoulder: tuple[float, float] = (10.0, 45.0),
+    bulge: float = 8.0,
+    kink: float = 15.0,
+    kink_span: tuple[float, float] = (35.0, 50.0),
+):
+    """Exact sections of :func:`eccentric_sac`: the circle in the plane ``z``
+    has centre (cx, cy) and radius r. The sac (radius ``sac_radius``, its
+    centre ``bulge`` off the neck axis along +x) narrows over ``shoulder`` to
+    the neck (``neck_radius``), which steps ``kink`` sideways along +y over
+    ``kink_span`` — smoothstep transitions, constant outside them (so the
+    profile extends the surface past its caps, for distance checks)."""
+    z = np.asarray(z, dtype=float)
+    w = 1.0 - _smoothstep((z - shoulder[0]) / (shoulder[1] - shoulder[0]))
+    r = neck_radius + (sac_radius - neck_radius) * w
+    cx = bulge * w
+    cy = kink * _smoothstep((z - kink_span[0]) / (kink_span[1] - kink_span[0]))
+    return cx, cy, r
+
+
+def eccentric_sac(
+    *,
+    length: float = 60.0,
+    sac_radius: float = 30.0,
+    neck_radius: float = 12.0,
+    shoulder: tuple[float, float] = (10.0, 45.0),
+    bulge: float = 8.0,
+    kink: float = 15.0,
+    kink_span: tuple[float, float] = (35.0, 50.0),
+    z0: float = 0.0,
+    z1: float | None = None,
+    n_theta: int = 96,
+    n_axial: int = 121,
+    n_truth: int = 4001,
+) -> tuple[pv.PolyData, AnalyticTruth]:
+    """A cropped aneurysm segment between two PARALLEL flat caps (D87): a wide
+    sac whose centre sits off the neck axis, a shoulder into a narrower neck
+    and a sideways kink into it — the shape whose centreline-ray wall folds.
+
+    Every section in a plane z = const is an exact circle (``eccentric_sac_profile``)
+    — the sections are NOT square to their centre path — and the caps are
+    the planes z = ``z0`` and z = ``z1`` (default ``length``; a range past
+    [0, length] extends the constant sac / neck — a reference surface for
+    distance checks). Volume truth is
+    ∫ π r(z)² dz (Cavalieri: a sheared stack of circles), by dense
+    quadrature. ``truth.points`` is the centre path (uniform in arc length)
+    and ``truth.radii`` the in-plane section radii. Not in ``GENERATORS``: its
+    truth is a stack of z-sections, not a tube square to a centreline.
+    """
+    z1 = length if z1 is None else z1
+    _validate(n_theta, n_axial, length=length, sac_radius=sac_radius,
+              neck_radius=neck_radius)
+    if not z0 < z1:
+        raise ValueError(f"need z0 < z1, got z0={z0}, z1={z1}")
+    if n_theta < 48:
+        # coarser rings make the flat wall facets of the straight stretches
+        # crease >= 7.5 deg, enough to pass as extra flat caps
+        raise ValueError(f"n_theta must be >= 48 for eccentric_sac, got {n_theta}")
+    profile = {
+        "length": length, "sac_radius": sac_radius, "neck_radius": neck_radius,
+        "shoulder": tuple(shoulder), "bulge": bulge, "kink": kink,
+        "kink_span": tuple(kink_span),
+    }
+    z = np.linspace(z0, z1, n_axial)
+    cx, cy, r = eccentric_sac_profile(z, **profile)
+    centers = np.column_stack([cx, cy, z])
+    normals = np.tile([1.0, 0.0, 0.0], (n_axial, 1))
+    binormals = np.tile([0.0, 1.0, 0.0], (n_axial, 1))
+    surface = _lattice_tube(centers, normals, binormals, r, n_theta)
+
+    zd = np.linspace(z0, z1, n_truth)
+    cxd, cyd, rd = eccentric_sac_profile(zd, **profile)
+    path = np.column_stack([cxd, cyd, zd])
+    arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))])
+    st = np.linspace(0.0, arc[-1], n_truth)
+    pts = np.column_stack([np.interp(st, arc, path[:, k]) for k in range(3)])
+    tang = np.gradient(pts, st, axis=0)
+    tang /= np.linalg.norm(tang, axis=1)[:, None]
+    truth = AnalyticTruth(
+        shape="eccentric_sac",
+        params={**profile, "z0": z0, "z1": z1, "n_theta": n_theta, "n_axial": n_axial},
+        points=pts,
+        tangents=tang,
+        radii=np.interp(st, arc, rd),
+        arc_lengths=st,
+        length=float(arc[-1]),
+        closed=False,
+        surface_area=None,
+        volume=float(np.trapezoid(math.pi * rd**2, zd)),
+        notes=[
+            "sections are circles in the planes z = const (radii in-plane), not "
+            "square to the centre path; volume = integral of pi r(z)^2 dz"
+        ],
+    )
+    return surface, truth
+
+
 GENERATORS: dict[str, Callable[..., tuple[pv.PolyData, AnalyticTruth]]] = {
     "straight_tube": straight_tube,
     "curved_tube": curved_tube,
     "tapered_tube": tapered_tube,
     "constricted_tube": constricted_tube,
     "torus": torus,
+    "aneurysm_tube": aneurysm_tube,
 }
 
 

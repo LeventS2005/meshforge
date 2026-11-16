@@ -4,59 +4,72 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] — 2026-11-16 — demo edition
 
-### Changed
-
-- Public tree slimmed to what someone *using* meshforge needs. The agent and
-  session machinery (`CLAUDE.md`, `AGENT_GROUNDUP_PROMPT.md`, `DECISIONS.md`,
-  `BACKLOG.md`, `INPUTS.md`) and the 72 per-milestone design documents under
-  `docs/specs/` and `docs/decisions/` are no longer published; they remain the
-  project's local working record. 246 tracked files -> 174.
-- Repository root reorganised: `CONTRIBUTING.md` and `SECURITY.md` moved to
-  `.github/` (GitHub still surfaces them there) and `TEST_PLAN.md` to `docs/`.
-  Root is now README, LICENSE, NOTICE, CHANGELOG, CITATION, the three
-  dependency manifests, and the source/test/docs/packaging directories.
-- Workbench UI reworked into desktop-tool chrome: a single dark theme owned by
-  the app, hairline-separated docked panels with small-caps title bars, 22px
-  controls with inset fields, flat raised buttons, and a status bar carrying the
-  session state.
-- `TEST_PLAN.md` brought up to date — it described milestone M1 while the
-  project was at V47. Now a summary-level map of the 60 test modules, the
-  ground-truth strategy, and exactly what is solver-gated versus ungated.
-- Security reports moved to [`docs/security/`](docs/security/) and renamed
-  without spaces; every finding now carries a re-verified **FIXED/OPEN** status
-  and the `file:line` that closes it.
-- README no longer implies a downloadable installer. There are no published
-  releases yet, so the packaging section describes building one.
-- Both Workbench screenshots in the tutorial regenerated on the new chrome,
-  against a live session driven through the tutorial's own happy path.
-
-### Fixed
-
-- A fresh clone that ran `meshforge-web` or `meshforge-desktop` got a bare
-  `ModuleNotFoundError`. `environment.yml` installs the base dependencies only
-  and `-e .` pulls no extras, so those entry points are the first thing a new
-  user hits with nothing installed. Both now raise with the exact install
-  command, name conda-forge for the Qt and vtk.js packages, and offer
-  `meshforge-web` as the no-Qt fallback. The README says plainly that the base
-  environment is CLI-only.
-- Workbench history panel: the `step` column collapsed to one character per line
-  ("ce nt er li ne"). The JSON columns' `overflow-wrap` made every column's
-  min-content one character, and auto table layout then squeezed the narrow
-  column; the step cell is now pinned to its natural width.
-- `conda-recipe/meta.yaml` declared the license as MIT and pointed `home` at a
-  former repository name. Both now match the Apache-2.0 `LICENSE` and this repo.
-- The web app's OpenAPI version was hard-coded and had drifted from the package
-  version; it now reads `meshforge.__version__`.
+This repository now holds one thing: the demo in which an AI copilot takes a
+CT of an aortic aneurysm from scan to wall stress and blood flow. The general
+meshing toolkit of 1.x is no longer part of it; it remains available at the
+tag [`v1.0.0`](https://github.com/LeventS2005/meshforge/tree/v1.0.0).
+Research software: not a medical device, not for diagnosis or treatment.
 
 ### Added
 
-- `SECURITY.md` — threat model, private reporting route, audit index.
-- `CONTRIBUTING.md`, `CHANGELOG.md`, `CITATION.cff`.
-- Group-name validator tests covering OpenFOAM dictionary metacharacters
-  (`;`, `{`, `}`, `#`, `$`, `//`) and an exact length-ceiling check, plus a
-  writer-level test for the one patch name that is not a `BoundaryGroup`.
+- **Load scan.** `segment`: TotalSegmentator, installed in its own
+  environment and run as a separate program, outlines the aorta on a CT
+  (`.nii.gz` / `.nrrd`); the contrast blood lumen is a threshold inside that
+  outline. `sac`: the outer aneurysm sac (lumen + thrombus + wall) recovered
+  from the CT around the lumen.
+- **Crop aneurysm.** `crop`: the neck, the sac and the bifurcation found on
+  the diameter profile, two flat caps, the lumen cut with the same planes,
+  and parallel caps on request.
+- **Mesh wall.** A plane-swept hexahedral wall (`volmesh --sweep planes` or
+  `auto`) beside the centreline sweep, and a quality gate: no inverted cell,
+  no capped or floored wall ray, and the thickness measured along the surface
+  normal within 5% of the 1.5 mm asked for. A wall that fails gives no stress.
+- **Wall stress.** `aaa-stress`: CalculiX on the imaged geometry at a
+  systolic and a what-if blood pressure, with the intraluminal thrombus
+  modelled as a tied solid. The peak wall stress is the 99th percentile
+  outside the clamped end zones. Investigational.
+- **Strength index.** `tissue-index`: the peak wall stress divided by
+  lab-measured wall strength (open strip-test data, CC BY 4.0), as a
+  P10 / P50 / P90 band with the number of aneurysms and strips shown.
+  Investigational, not a diagnosis.
+- **Blood flow.** A steady laminar OpenFOAM case built from the crop's own
+  blood lumen (`meshforge copilot --flow-live`) and solved by the `cfd` step.
+- **The copilot.** `meshforge copilot`: a Claude model plans the steps, calls
+  five tools and recovers when the wall fails its gate. The report is built
+  from the tool outputs. The model's own summary is shown only when a guard
+  finds every number in it in a tool output.
+- **The demo page.** The Workbench shows the six steps as tabs with their
+  state, results that sweep in from the top, a slow turntable, a wall stress /
+  blood flow switch, a patient atlas and a twin card.
+- `scripts/demo_run.py`: the same six steps through the copilot's own tools,
+  without a language model or an API key.
+- `docs/DEMO_GUIDE.md`.
+
+### Changed
+
+- The Workbench is always the demo layout. The Demo switch, the source box,
+  the Quick start, the history table and the native file pickers are gone.
+- The command line is `copilot`, `web`, and the single-step commands
+  `segment`, `sac`, `crop`, `volmesh`, `lumen`, `repair`, `aaa-stress`,
+  `tissue-index`, `cfd`, `replay` and `check`.
+- The extras are `meshing`, `image`, `copilot`, `web`, `viewport` and `dev`.
+
+### Removed
+
+- The general meshing toolkit of 1.x: CAD import (DWG/DXF, STEP/IGES/BREP),
+  image-volume and contour import, multi-block meshing with projection,
+  smoothing and grading, boundary layers, the tetrahedral wall backend,
+  branching trees, the generic CalculiX deck builder and solve step, the
+  MYSTRAN cross-check, the NASTRAN, FLUENT, LS-DYNA and ANSYS writers,
+  recipes, the desktop shell and the installers, with their commands, tests
+  and documents.
+
+### Fixed
+
+- `GET /geometry` sends `view_dir` again, so a CFD result with a flow section
+  opens face-on to it.
 
 ## [1.0.0] — 2026-07-24
 
@@ -91,5 +104,5 @@ release itself is this commit.
   Lamé thick cylinder, Euler buckling, rod spectrum, log T(r), Hagen–Poiseuille,
   Blasius friction, and Ghia et al. (1982) lid-driven cavity.
 
-[Unreleased]: https://github.com/LeventS2005/meshforge/compare/v1.0.0...HEAD
+[2.0.0]: https://github.com/LeventS2005/meshforge/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/LeventS2005/meshforge/releases/tag/v1.0.0

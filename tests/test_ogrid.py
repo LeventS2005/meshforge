@@ -1,21 +1,13 @@
-"""V26 O-grid (butterfly) disk layout: area/volume truths, the lifted
-quality floor vs the projected disk (pins D37's limit), exact conformity,
-loud refusals, and session/CLI integration."""
+"""V26 O-grid (butterfly) disk layout: area truths, the quality floor,
+exact conformity and loud refusals."""
 from __future__ import annotations
 
-import json
 
 import numpy as np
 import pytest
 
-from meshforge.cli import main
-from meshforge.io.cad import _signed_area
-from meshforge.meshing import (
-    extrude_blocks,
-    ogrid_disk,
-    project_profile,
-    quad_scaled_jacobians,
-)
+from meshforge.meshing import ogrid_disk, quad_scaled_jacobians
+from meshforge.meshing.ogrid import _signed_area
 
 
 def _circle(n: int = 128, r: float = 1.0) -> np.ndarray:
@@ -46,7 +38,7 @@ def _mesh_area(bm) -> float:
 # truths
 
 
-def test_disk_area_converges_and_extruded_volume_exact():
+def test_disk_area_converges():
     loop = _circle()
     poly_area = _signed_area(loop)  # the 128-gon truth the rim lies on
     bm_1 = ogrid_disk([loop], target_size=0.1)
@@ -59,31 +51,14 @@ def test_disk_area_converges_and_extruded_volume_exact():
     assert abs(area_2 - np.pi) < abs(area_1 - np.pi)
     assert abs(area_2 - poly_area) / poly_area <= 1e-3
 
-    # extrusion is exact: hex volume == quad area x length
-    wall = extrude_blocks(bm_1, thickness=10.0, n_layers=5)
-    assert wall.quality.n_inverted == 0
-    assert wall.quality.total_volume == pytest.approx(area_1 * 10.0, rel=1e-9)
 
-
-def test_quality_floor_lifted_above_projected_disk():
+def test_quality_floor():
     loop = _circle()
     # O-grid sj_min is set by the layout (135 deg spoke/core corner):
     # measured 0.7071 at every target size.
     for ts in (0.15, 0.1, 0.05):
         sj = quad_scaled_jacobians(*_pts_quads(ogrid_disk([loop], target_size=ts)))
         assert float(sj.min()) >= 0.70
-
-    # ... while the projected disk baseline decays with refinement
-    proj = project_profile([loop], target_size=0.15)
-    proj_sj = float(quad_scaled_jacobians(proj.points, proj.quads).min())
-    ogrid = ogrid_disk([loop], target_size=0.15)
-    ogrid_sj = float(quad_scaled_jacobians(ogrid.points, ogrid.quads).min())
-    assert ogrid_sj > 5.0 * proj_sj  # measured 0.7071 vs 0.0852
-
-    # ... and REFUSES at ts=0.1 (D37's documented limit) where the
-    # O-grid sails through.
-    with pytest.raises(ValueError, match="below floor"):
-        project_profile([loop], target_size=0.1)
 
 
 def _pts_quads(bm):
@@ -122,18 +97,6 @@ def test_conformity_exact_and_rim_on_curve():
     assert np.all(r >= 1.0 - sagitta - 1e-9)
 
 
-def test_extruded_boundary_groups():
-    bm = ogrid_disk([_circle(64)], target_size=0.2)
-    n_quads = len(bm.quads)
-    n_rim = len(bm.edge_groups["outer_rim"])
-    wall = extrude_blocks(bm, thickness=1.0, n_layers=3)
-    assert set(wall.boundary) == {"front", "back", "outer_rim", "hole_rims"}
-    assert len(wall.boundary["front"].face_nodes) == n_quads
-    assert len(wall.boundary["back"].face_nodes) == n_quads
-    assert len(wall.boundary["outer_rim"].face_nodes) == n_rim * 3
-    assert len(wall.boundary["hole_rims"].face_nodes) == 0
-
-
 # ---------------------------------------------------------------------------
 # loud refusals
 
@@ -154,94 +117,3 @@ def test_refusals_are_loud():
         ogrid_disk([circle], target_size=0.0)
     with pytest.raises(ValueError, match="at least 4"):
         ogrid_disk([np.array([[0, 0], [1, 0], [0, 1]], float)], target_size=0.2)
-
-
-def test_smoothing_refuses_ogrid_meshes():
-    from meshforge.meshing.smooth import smooth_lattice
-
-    bm = ogrid_disk([_circle(64)], target_size=0.2)
-    with pytest.raises(ValueError, match="no global rectilinear lattice"):
-        smooth_lattice(bm)
-
-
-# ---------------------------------------------------------------------------
-# session + CLI integration
-
-
-def _circle_profile():
-    from meshforge.io.cad import Profile2D
-
-    return Profile2D(
-        loops=[_circle(64)],
-        components=[{"outer": 0, "holes": []}],
-        units="mm",
-        provenance={},
-        mesh_ready=True,
-    )
-
-
-def test_session_ogrid_knobs():
-    from meshforge.pipeline import MeshingSession
-
-    s = MeshingSession()
-    s.profile = _circle_profile()
-    r = s.compute_blocks(target_size=0.15, thickness=5.0, n_layers=4, ogrid=1)
-    assert r.summary["quality"]["n_inverted"] == 0
-    assert r.summary["quality"]["sj_min"] >= 0.70
-    assert s.journal[-1]["params"]["ogrid"] == 1
-    assert s.journal[-1]["params"]["core_fraction"] == 0.5
-    assert any("O-grid" in n for n in s.volmesh.notes)
-
-    with pytest.raises(ValueError, match="mutually exclusive"):
-        s.compute_blocks(target_size=0.15, ogrid=1, project=1)
-    with pytest.raises(ValueError, match="lattice meshes only"):
-        s.compute_blocks(target_size=0.15, ogrid=1, grade_ratio=2.0)
-
-
-def test_cli_blocks_ogrid(tmp_path, capsys):
-    profile = {
-        "loops": [_circle(64).tolist()],
-        "components": [{"outer": 0, "holes": []}],
-        "units": "mm",
-        "mesh_ready": True,
-        "provenance": {},
-    }
-    src = tmp_path / "circle_profile.json"
-    src.write_text(json.dumps(profile))
-    out_dir = tmp_path / "outputs"
-
-    rc = main(
-        [
-            "blocks", str(src), "--ogrid",
-            "--target-size", "0.15", "--thickness", "5", "--n-layers", "4",
-            "--outputs", str(out_dir),
-        ]
-    )
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "inverted=0" in out
-    assert "O-grid" in out
-    assert (out_dir / "circle_profile_blocks.vtu").is_file()
-
-    rc = main(["blocks", str(src), "--ogrid", "--project", "--target-size", "0.15"])
-    assert rc == 1
-    assert "mutually exclusive" in capsys.readouterr().err
-
-    rc = main(["blocks", str(src), "--ogrid", "--grade-ratio", "2", "--target-size", "0.15"])
-    assert rc == 1
-    assert "lattice meshes only" in capsys.readouterr().err
-
-    # a holed profile is refused loudly under --ogrid
-    square = [[-3, -3], [3, -3], [3, 3], [-3, 3]]
-    holed = {
-        "loops": [square, _circle(32)[::-1].tolist()],
-        "components": [{"outer": 0, "holes": [1]}],
-        "units": "mm",
-        "mesh_ready": True,
-        "provenance": {},
-    }
-    src2 = tmp_path / "holed_profile.json"
-    src2.write_text(json.dumps(holed))
-    rc = main(["blocks", str(src2), "--ogrid", "--target-size", "0.5"])
-    assert rc == 1
-    assert "exactly one loop" in capsys.readouterr().err

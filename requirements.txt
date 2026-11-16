@@ -1,6 +1,6 @@
 # pip fallback (conda + environment.yml is the primary path).
 # Install:  pip install -r requirements.txt -e .
-# Bands mirror pyproject.toml (V43, D65) — numpy is capped tight because
+# Bands mirror pyproject.toml — numpy is capped tight because
 # vtk<=9.6's numpy_support still assigns ndarray.shape (deprecated NumPy 2.5;
 # the removal hard-breaks VTK). Re-widen only after VTK fixes numpy_support.
 pyvista>=0.47,<1

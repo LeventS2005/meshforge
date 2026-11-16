@@ -1,7 +1,7 @@
 """Tiny text-sanitisation helpers shared by the I/O and solver layers.
 
 F2 (session-12 security fix): raw external-tool output and raw file bytes
-get embedded in exception messages (ccx/MYSTRAN/OpenFOAM stdout tails,
+get embedded in exception messages (ccx/OpenFOAM stdout tails,
 ``line!r`` from the .frd/.dat parsers, dwg2dxf stderr). Those messages are
 printed to a terminal by the CLI, where ANSI/OSC control sequences would be
 interpreted — screen clears, cursor moves, title/clipboard changes, or

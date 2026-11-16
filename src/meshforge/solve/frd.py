@@ -66,7 +66,11 @@ def _values_from(line: str, start: int) -> list[float]:
     return out
 
 
-def read_frd(path: str | Path) -> FrdModel:
+def read_frd(path: str | Path, *, elements: bool = True) -> FrdModel:
+    """Parse a ccx .frd. ``elements=False`` skips the element block (3C)
+    unread — for a caller that needs only nodal fields of a deck whose
+    element type has no VTK mapping here (D88: the AAA C3D20R wall); the
+    model then carries ``cells=None`` and a note saying so."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"frd result file not found: {path}")
@@ -94,6 +98,11 @@ def read_frd(path: str | Path) -> FrdModel:
                     node_ids.append(int(row[3:13]))
                     coords.append(_values_from(row, 13)[:3])
                 i += 1
+        elif key == "3C" and not elements:  # skipped unread (D88)
+            i += 1
+            while i < n and not lines[i].startswith(" -3"):
+                i += 1
+            notes.append("element block skipped (elements=False): nodal fields only")
         elif key == "3C":  # elements
             i += 1
             while i < n and not lines[i].startswith(" -3"):

@@ -104,20 +104,3 @@ def test_meshing_registry_and_guards(straight) -> None:
         get_backend("swept").mesh_wall(surface, 0.0, centerline=cl)
     with pytest.raises(ValueError, match="lattice too coarse"):
         get_backend("swept").mesh_wall(surface, 0.5, centerline=cl, n_theta=4)
-
-
-def test_tet_backend_straight_tube(straight) -> None:
-    pytest.importorskip("gmsh")
-    surface, truth, cl = straight
-    wall = get_backend("tet").mesh_wall(surface, T_WALL, centerline=cl)
-
-    r = float(truth.radii[0])
-    expected = math.pi * ((r + T_WALL) ** 2 - r**2) * cl.length
-    assert wall.quality.n_inverted == 0
-    assert wall.quality.total_volume == pytest.approx(expected, rel=0.03)
-    assert set(wall.grid.cell_data["region"]) == {1}
-
-    b = wall.boundary
-    assert all(b[name].n_faces > 0 for name in ("inner", "outer", "inlet", "outlet"))
-    assert sum(g.n_faces for g in b.values()) == wall.grid.extract_surface(algorithm="dataset_surface").n_cells
-    assert b["inner"].face_nodes.shape[1] == 3

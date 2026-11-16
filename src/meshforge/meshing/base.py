@@ -74,9 +74,13 @@ class WallMesh:
     backend: str
     quality: VolumeQuality
     notes: list[str] = field(default_factory=list)
+    # D85: the swept wall's thickness guard counts (n_capped / n_floored rays,
+    # applied thickness range) — a stress result on a capped or floored wall
+    # is not reportable, so the counts travel with the mesh, not only in notes.
+    lattice: dict[str, Any] | None = None
 
     def summary(self) -> dict[str, Any]:
-        return {
+        out = {
             "backend": self.backend,
             "n_points": int(self.grid.n_points),
             "n_cells": int(self.grid.n_cells),
@@ -84,6 +88,9 @@ class WallMesh:
             "quality": self.quality.to_dict(),
             "notes": self.notes,
         }
+        if self.lattice is not None:
+            out["lattice"] = dict(self.lattice)
+        return out
 
 
 _AXES = {"x": 0, "y": 1, "z": 2}

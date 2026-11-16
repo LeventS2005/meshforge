@@ -27,7 +27,7 @@ def test_clean_module_passes(tmp_path: Path) -> None:
 def test_docstring_and_comment_mentions_are_not_violations(tmp_path: Path) -> None:
     # The exact false positive the old substring scan had.
     source = (
-        '"""Docs may say meshforge.meshing or offset_wall freely."""\n'
+        '"""Docs may say meshforge.meshing or mesh_wall freely."""\n'
         "# comment: meshforge.solve, export_abaqus\n"
         "x = 1\n"
     )
@@ -42,11 +42,11 @@ def test_docstring_and_comment_mentions_are_not_violations(tmp_path: Path) -> No
         "from meshforge.geometry import frames\n",
         "from meshforge import synth\n",
         "from ..meshing import wall\n",  # relative, inside the package
-        "from meshforge.meshing.wall import offset_wall\n",
-        "from somewhere import offset_wall\n",
+        "from meshforge.meshing.swept import mesh_wall\n",
+        "from somewhere import mesh_wall\n",
         "import importlib\nm = importlib.import_module('meshforge.solve')\n",
         "m = __import__('meshforge.meshing')\n",
-        "y = offset_wall(x)\n",
+        "y = mesh_wall(x)\n",
         "y = pkg.export_abaqus(x)\n",
     ],
 )

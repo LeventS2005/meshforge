@@ -3,21 +3,23 @@ message: "If you use meshforge in academic work, please cite it as below."
 type: software
 title: "meshforge"
 abstract: >-
-  Research-grade meshing toolkit that turns CAD drawings and closed or tubular
-  triangulated surfaces into analysis-ready, tagged volume meshes and complete
-  solver input decks for CalculiX, NASTRAN, OpenFOAM, FLUENT, LS-DYNA and ANSYS.
+  An AI copilot takes one routine CT of an abdominal aortic aneurysm from scan
+  to physics on a laptop: aorta outline, aneurysm crop, a quality-gated wall
+  mesh, wall stress (CalculiX), an investigational strength index and blood
+  flow (OpenFOAM), with every reported number taken from the tools.
+  Research software: not a medical device, not for diagnosis or treatment.
 authors:
   - family-names: "Sirtas"
     given-names: "Levent"
-version: "1.0.0"
-date-released: "2026-07-24"
+version: "2.0.0"
+date-released: "2026-11-16"
 license: Apache-2.0
 repository-code: "https://github.com/LeventS2005/meshforge"
 url: "https://github.com/LeventS2005/meshforge"
 keywords:
-  - mesh-generation
   - finite-element-analysis
   - computational-fluid-dynamics
   - hexahedral-meshing
-  - scientific-computing
+  - abdominal-aortic-aneurysm
   - cardiovascular-biomechanics
+  - scientific-computing

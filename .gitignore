@@ -10,10 +10,6 @@ dist/
 .pytest_cache/
 .venv/
 
-# V37 packaging — generated build inputs (the recipe is tracked; these are not)
-packaging/_build_src/
-packaging/local-channel/
-
 # OS
 .DS_Store
 

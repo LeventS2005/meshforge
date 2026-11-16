@@ -15,3 +15,27 @@ diagnosis or treatment.
 
 No patient data is contained in this repository. Clinical inputs are read
 only from paths outside the repository tree and are never committed.
+
+Third-party data: src/meshforge/data/strength_v0.csv and strength_v0_donors.csv
+are derived from "Dataset on cadaveric human abdominal aorta aneurysm
+biomechanics (uniaxial) and histology" by Gomes VC, da Silva ES, da Silva LF,
+Gomes J, Raghavan ML, Silvestre G, Queiroz A, Marques M, Zyngier SP and
+Chung TK-J, Mendeley Data, version 3 (2020), doi:10.17632/x64srrc39p.3,
+licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). The values
+were changed (unit conversion, recomputation, flags); see
+src/meshforge/data/STRENGTH_V0_SOURCES.md. These files are not covered by the
+Apache License.
+
+Demo scan (not in this repository; attached to the GitHub release v2.0.0 as
+ct.nii.gz): subject s1364 of the TotalSegmentator dataset, Wasserthal et al.,
+doi:10.5281/zenodo.10047292, licensed CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/). It is redistributed unchanged.
+
+Programs the demo calls at run time. None of them is bundled in this
+repository; each is installed separately and keeps its own licence:
+- TotalSegmentator (Wasserthal et al., Apache-2.0): outlines the aorta on the CT.
+- gmsh: fills the thrombus and the blood lumen with tetrahedra.
+- CalculiX: solves the wall stress.
+- OpenFOAM: solves the blood flow.
+- vtk.js, served from the installed trame-vtk package: draws the 3-D view
+  in the browser.

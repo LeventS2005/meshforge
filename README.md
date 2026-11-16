@@ -1,171 +1,165 @@
-# meshforge
+# meshforge — demo edition
 
-[![CI](https://github.com/LeventS2005/meshforge/actions/workflows/ci.yml/badge.svg)](https://github.com/LeventS2005/meshforge/actions/workflows/ci.yml)
+An AI copilot takes one routine CT of an aortic aneurysm from scan to physics
+on a laptop: AI outline of the aorta → crop to the aneurysm → hexahedral wall
+mesh with a quality gate → wall stress by finite elements at two blood
+pressures → an investigational strength index → blood flow by CFD. Research
+software: not a medical device, not for diagnosis or treatment.
 
-Research-grade meshing toolkit: turns CAD drawings and closed/tubular
-triangulated surfaces (.dwg/.dxf/.stl/.ply/.vtp) into analysis-ready, tagged
-volume meshes and complete solver input decks (CalculiX-verified Abaqus
-`.inp`). Scriptable pipeline with swappable backends; GUI-agnostic core.
+![The finished demo run in the Workbench: six tabs done on the left, the result on the cropped aneurysm in the 3-D view, the patient atlas and the twin card on the right](docs/images/demo.png)
 
-## Feature map (vs TrueGrid's advertised set)
+*The finished run on the demo scan: TotalSegmentator dataset, subject s1364
+(Wasserthal et al., CC BY 4.0).*
 
-| TrueGrid feature | meshforge | Where |
+## What the demo does
+
+| | Step | What runs |
 |---|---|---|
-| The Projection Method | proxy block meshes snapped onto curved profiles, exact corner capture, TFI re-blend, quality gate | `meshing/project.py`, `blocks --project` |
-| Multi-block Structures | rectilinear block decomposition → structured quads (exact index-arithmetic edge merge) → tagged hexes | `meshing/blocks.py`, `blocks` |
-| Pre-processing | full runnable decks: materials (elastic/hyperelastic), BCs, pressure/point loads, steps; Lamé benchmark solved in CalculiX to 2-3% | `export/deck.py`, `deck` |
-| Parametric & Scripting | YAML recipes with cartesian parameter sweeps, per-variant manifests, failure isolation | `recipes.py`, `run` |
-| Eliminate Clean-up (CAD) | DWG/DXF import: segment chaining, T-junction splitting, planar face extraction; validated on a real architectural DWG | `io/cad.py`, `import-cad` |
-| Eliminate Clean-up (surfaces) | vertex merge, degenerate/duplicate faces, manifold-safe hole fill; non-manifold reported, never silently "fixed" | `quality/repair.py`, `repair` |
-| Geometry Library | tubes (straight/curved/tapered/constricted/torus), box/cylinder/sphere/plate, loop extrusion, revolution — all with analytic truths | `synth/`, `synth` |
-| Modification Simplicity | session journal → `.mfwork` work files → selective replay with overrides | `pipeline.py`, `replay` |
-| Application Versatility | Y-junction trees: SDF-union synth, skeleton tree extraction, shell-pair tet walls; closed loops (torus) swept with holonomy-corrected frames | `synth/branching.py`, `geometry/tree.py` |
+| 1 | Load scan | TotalSegmentator outlines the aorta on the CT; the outer aneurysm sac is recovered from the CT around it |
+| 2 | Crop aneurysm | the aneurysm is cut out between two flat caps, from the neck to just above the bifurcation |
+| 3 | Mesh wall | a 1.5 mm hexahedral wall, checked by a quality gate; a wall that fails the gate gives no stress |
+| 4 | Wall stress · FEA | CalculiX solves the wall under blood pressure at 140 and 120 mmHg, with the thrombus modelled |
+| 5 | Strength index | the peak wall stress divided by lab-measured wall strength: an investigational index, not a diagnosis |
+| 6 | Blood flow · CFD | OpenFOAM solves a steady resting flow through the cropped blood lumen |
 
-### Beyond TrueGrid (roadmap v3)
+The copilot is a Claude model called through the Anthropic API. It plans the
+steps, calls the tools and recovers when the wall fails its quality gate. It
+computes no number: every number comes from a tool, and a guard checks every
+number in its written summary against the tool outputs before the summary is
+shown.
 
-| Capability | meshforge | Where |
-|---|---|---|
-| In-app solve + results read-back | CalculiX runner (temp-dir staged, fail-loud) + `.frd`/`.dat` parsers; displacements/stresses attached to the session mesh as point data (`DISP`, `U_mag`, `S_mises`), Lamé-validated end to end | `solve/`, `solve`, GUI "solve" step |
-| CFD mesh output (OpenFOAM) | `constant/polyMesh` writer: owner/neighbour extraction with outward winding (divergence-theorem verified), named patches from boundary groups, hard error on uncovered faces | `export/foam.py`, `foam`, `save("foam", …)` |
-| NASTRAN decks | SOL 101 linear statics: GRID*/CHEXA/CTETRA, MAT1+PSOLID per region, SPC1/SPC, solid-face PLOAD4, FORCE — solve-level validated in MYSTRAN vs CalculiX + Lamé (PLOAD4 itself is unimplemented in MYSTRAN: format-level only; use `pressure_to_nodal_forces`) | `export/nastran.py`, `deck --target nastran`, `solve DECK.bdf` |
-| 3-D CAD import (STEP/IGES/BREP) | gmsh OCC kernel → watertight triangulated surface + provenance; feeds the whole pipeline (STEP cylinder → swept wall, 0 inverted) | `io/cad3d.py`, `import-cad3d`, GUI "import_cad3d" |
-| Elliptic smoothing | Winslow pass over block-mesh interiors (rims exactly fixed, area preserved) with a do-no-harm quality guard: sj_min can never regress — blended back or fully reverted, reported in the notes | `meshing/smooth.py`, `blocks --smooth` |
-| Transition grading | symmetric geometric spacing within each grid interval (fine cells at every feature line); counts stay global so block conformity is exact | `blocks --grade-ratio` |
-| Image ingest (CT/MRI path) | volume → iso-surface: .npy always, NIfTI/DICOM via lazy nibabel/pydicom (orientation-safe: rotated affines refused); level always explicit | `io/image.py`, `import-image`, GUI "import_image" |
-| History / replay | live journal mirror (step/params/summary) + save-workfile button — exactly what a `.mfwork` replays | web Workbench history panel (`web/static/app.js`) |
-| Boundary-layer mesher (CFD) | geometric wedge layers grown outward from a closed body surface (smoothed normals, body/outer patches); chains straight into polyMesh export | `meshing/prism.py`, `blayers`, GUI "blayers" |
-| In-app CFD solve (OpenFOAM) | laminar case builder (simpleFoam/icoFoam: system/0 files from declarative patch BCs) + staged runner (OpenFOAM refuses paths with spaces) + pyvista read-back (`U`, `p`, `U_mag` on the mesh); Hagen–Poiseuille-benchmarked (centerline U, dp/dz, profile within a few %) | `solve/foam_case.py`, `solve/foam_runner.py`, `cfd`, GUI "cfd" step |
-| Modal + heat FEA (CalculiX) | `*FREQUENCY` (eigenfrequencies parsed from the .dat) and steady `*HEAT TRANSFER` (temperature DOF-11 BCs, `*DFLUX` surface flux, NDTEMP read-back); exact truths: rod spectrum ≤0.4%, radial log T(r) ≤0.3% | `export/deck.py` step kinds, `deck --analysis`, `solve`, session "solve" knobs |
-| O-grid disk layout | butterfly block layout for star-shaped loops (core square + 4 rings, rims exactly on the curve): sj_min 0.7071 invariant under refinement where the projected disk decays to its 0.05 gate; H-P pipe benchmark errors cut 2–8× | `meshing/ogrid.py`, `blocks --ogrid` |
-| Turbulent CFD (kOmegaSST) | steady RANS case templates: 0/{k,omega,nut} from inlet intensity + mixing length, Spalding all-y+ wall function (probe-verified: the log-layer wall function is −21% on friction at buffer-layer y+); Blasius pipe-friction benchmark −0.7% at Re=1e4 | `solve/foam_case.py`, `cfd --turbulence kOmegaSST` |
-| FLUENT .msh export | face-based ASCII mesh with named boundary zones (hex indices, c0/c1 orientation pinned against fluent3DMeshToFoam — the wrong pairing converts to negative volumes); per-cell divergence volumes recomputed from the written file match VTK exactly | `export/fluent.py`, `fluent`, `save("fluent", …)` |
-| Transient CFD time series | every written time step read back as a frame (sorted/complete, one mesh, loud checks); per-frame .vtu persistence; non-commensurate icoFoam time knobs refused (they silently lose the end state); GUI slider/play field animation; startup pipe flow rises monotonically to the exact Hagen–Poiseuille profile | `solve/foam_runner.py read_case_series`, `cfd --series`, session "series" knob, GUI animation panel |
-| Closed-cavity CFD | sealed domains with the pressure level pinned by pRefCell/pRefValue (silently-open cavities stay loudly refused); moving-wall + 2-D `empty` BC kinds; patch splitting by face-centroid coordinate (`split_patch`); Ghia et al. (1982) Re=100 lid-driven cavity within 0.0085 of lid speed at 64² | `cfd --moving-wall --empty --closed-cavity`, `meshing/base.py split_boundary_group`, session "split_patch" step |
-| Transient heat + film convection (CalculiX) | `*FILM` convection expanded element-wise (ccx refuses named surfaces on that card) and transient `*HEAT TRANSFER, DIRECT` with `*INITIAL CONDITIONS`; per-step temperatures read back from every 100CL frd block (`time_steps`); exact truths: steady film tube +0.34% of ΔT, lumped-capacitance decay 0.19% of ΔT at dt≪τ (ccx integrates backward Euler — dt is the accuracy dial) | `deck --film --transient --dt --period --t0`, `FrdModel.history`, session film/transient knobs |
-| Buckling + preloaded modes (CalculiX) | `*BUCKLE` factors parsed from the .dat (factor × load = critical load; trap: too few requested factors makes ccx silently skip the lowest modes) and `*STATIC`→`*FREQUENCY, PERTURBATION` preloaded modes; exact truths: fixed-free Euler column +0.43% with reduced integration (full C3D8 locks +12%, C3D8I is broken under *BUCKLE), preload frequency shift within 1.2% of √(1−P/P_cr) | `deck --analysis buckle --preloaded`, `parse_buckling_factors`, session buckle/preloaded knobs |
-| LS-DYNA keyword deck export | fixed small-format .k decks (*NODE/*ELEMENT_SOLID with collapsed-hex tets/*PART per region/*SECTION_SOLID ELFORM 1/2 hex, 10/16 tet/*MAT_ELASTIC/*BOUNDARY_SPC_NODE/unit-ramp *DEFINE_CURVE/*LOAD_NODE_POINT/*LOAD_SEGMENT wound outward for *DSLOAD sign parity); **format-level only — no LS-DYNA solver validated it** (golden cards + exact internal re-parse; the deck header says so) | `export/lsdyna.py`, `deck --target lsdyna` |
-| ANSYS MAPDL .cdb deck export | CDWRITE,DB-style archives (NBLOCK `(3i9,6e20.13)`/EBLOCK `(19i9)` with degenerate-SOLID185 tets I J K K M M M M/KEYOPT(2) 0-full 1-reduced/CMBLOCK region+boundary components/MP material/per-node D with native nonzero enforced displacement/F/per-face SFE PRES from the SOLID185 face table); **format-level only — no ANSYS solver validated it** (golden cards + exact internal re-parse; ANSYS's own `ansys-mapdl-reader` parsed the emitted decks exactly in the V44 probe; the deck header says so) | `export/ansys.py`, `deck --target ansys` |
-| Thermal stress — coupled heat→static (CalculiX) | sequential one-way coupling: a heat solve's NDTEMP field re-emitted as per-node `*TEMPERATURE` in a static step with `*EXPANSION` and an explicit `*INITIAL CONDITIONS` stress-free reference (REQUIRED — ccx silently ignores `*EXPANSION ZERO=` and a wrong datum is silently wrong stress; α(T) tables refused: ccx anchors their secant at numeric temperature zero, so the identical physics changes with the temperature scale — all V45-probe-verified); exact truths: free bar ε=αΔT, constrained bar σ=−EαΔT (integration-point exact), the V24 log-T(r) tube converging onto the Timoshenko hoop-stress closed form under radial refinement | `deck --expansion --temperature/--temperature-from --t-ref` (+ `--temperature-time` to pick one snapshot of a TRANSIENT heat history — V46, exact-match only against the frd's own recorded times), session `expansion`/`temperature`/`temperature_from`/`temperature_time`/`t_ref` knobs |
-| Lumen (blood-volume) fill | fills the INSIDE of a tubular surface for cardiac FEA/CFD: swept O-grid (butterfly) hexahedra along the validated centreline with a pinned per-station block topology + a do-no-harm guarded smoothing pass (sj_min can never regress), automatic gmsh tet fallback with a loud fold-number note (F = r·κ — a planar-section sweep MUST fold where F ≥ 1) when a section defeats the O-grid; the mesh takes the session volmesh slot with `wall`/`inlet`/`outlet` groups so deck/solve/CFD work unchanged; all 20 real cardiac arches (both UCSF families) reach inverted 0 — 19 structured hex, 1 honest tet | `meshing/lumen.py`, `lumen`, session "lumen" step (V47) |
+The steps show as six tabs in a local browser app, the Workbench, with the
+3-D result in the middle and a patient atlas and a twin card on the right.
+The full guide is [`docs/DEMO_GUIDE.md`](docs/DEMO_GUIDE.md).
 
 ## Install
 
 ```bash
+git clone https://github.com/LeventS2005/meshforge.git
+cd meshforge
 conda env create -f environment.yml --solver=libmamba
 conda activate meshforge
+pip install -e ".[meshing,image,copilot,web]"
+conda install -c conda-forge trame-vtk trame-vuetify
 ```
 
-**This gives you the CLI.** `environment.yml` installs the base dependencies
-only, and the `-e .` inside it pulls no extras — everything optional is
-lazy-imported so the CLI never pays for a dependency it does not use. Check it
-with `meshforge --help`.
+The last line is the 3-D view (the `viewport` extra). On macOS take it from
+conda-forge, not pip; elsewhere `pip install -e ".[viewport]"` also works.
+Python 3.10 or newer; the environment file uses 3.12.
 
-> Already have a conda env called `meshforge`? `environment.yml` names it, so
-> the command above targets *that* env and its editable install will be
-> repointed at this clone. Use `-n <other-name>` to keep them apart.
+The full run has been done on macOS with Apple silicon. Load scan runs TotalSegmentator on the Apple GPU (its `device` knob, `mps` by default). On another machine, set that knob to `cpu` in the Workbench and run the steps there: `meshforge copilot` and `scripts/demo_run.py` use the default.
 
-**For the Workbench** (the web/desktop GUI) add the web extra, then the
-viewport and Qt from conda-forge:
+## External tools
+
+The demo calls three programs that are installed separately. meshforge looks
+for each in this order:
+
+| Tool | Used by | Found through |
+|---|---|---|
+| TotalSegmentator | Load scan | `MESHFORGE_TOTALSEG` (the executable), then `PATH`, then `~/miniconda3/envs/totalseg/bin/TotalSegmentator` |
+| CalculiX (`ccx`) | Wall stress | `MESHFORGE_CCX`, then `PATH`, then `~/miniconda3/envs/ccxsolve/bin/ccx` |
+| OpenFOAM | Blood flow | `MESHFORGE_OPENFOAM` (the launcher), then a sourced OpenFOAM on `PATH`, then an `openfoam` launcher on `PATH` |
+
+TotalSegmentator goes in its own environment (it brings PyTorch, which
+meshforge never imports):
 
 ```bash
-pip install -e ".[web]"
-conda install -c conda-forge trame-vtk trame-vuetify pyside6 qt6-webengine
+conda create -n totalseg --solver=libmamba python=3.11
+conda run -n totalseg pip install TotalSegmentator
+conda create -n ccxsolve -c conda-forge calculix
+brew install gerlero/openfoam/openfoam@2506    # OpenFOAM on macOS
 ```
 
-Then `meshforge-desktop` for a native window, or `meshforge-web` for the same
-UI in a browser on `127.0.0.1`. Running either without these installed tells
-you exactly what is missing — it does not fail with a bare import error.
+If conda lives somewhere other than `~/miniconda3`, set `MESHFORGE_TOTALSEG` and `MESHFORGE_CCX` to the two executables.
 
-**macOS: PySide6, qt6-webengine, trame-vtk and trame-vuetify must come from
-conda-forge, never pip.** A pip PySide6 bundles a second Qt beside conda's
-`qt6-main` and hard-crashes the shell (exit 134).
+## The demo scan
 
-Other extras, all optional: `[meshing]` gmsh (tet backend), `[cad]` ezdxf
-(DXF/DWG), `[recipes]` pyyaml (parameter sweeps), `[image]` pydicom/nibabel
-(DICOM + NIfTI ingest). DWG import also needs `dwg2dxf` from GNU LibreDWG
-(`brew install libredwg`). pip-only fallback:
-`pip install -r requirements.txt -e .`.
-
-CI runs the ungated suite on every push/PR — solver-gated tests need local
-CalculiX/OpenFOAM/MYSTRAN installs.
-
-### Or: build a self-contained installer — no conda needed (macOS arm64 / Linux / Windows)
-
-> **There are no published GitHub releases yet, so there is no installer to
-> download** — you build it from this repo. Everything below describes that
-> build, not a download link.
+The demo runs on one public CT: subject s1364 of the TotalSegmentator dataset
+(Wasserthal et al., CC BY 4.0, doi
+[10.5281/zenodo.10047292](https://doi.org/10.5281/zenodo.10047292)). The file
+is attached to the `v2.0.0` release of this repository as `ct.nii.gz`,
+unchanged from the dataset:
 
 ```bash
-bash packaging/build.sh      # macOS arm64 -> dist/meshforge-1.0.0-MacOSX-arm64.pkg (+ .sh)
+curl -L -o ct.nii.gz https://github.com/LeventS2005/meshforge/releases/download/v2.0.0/ct.nii.gz
+shasum -a 256 ct.nii.gz
+# 7957f71d5a673486f0d23b403ece22233fdf1a5ac02a2ee4649fb99006f856dd
 ```
 
-Double-click the resulting **`.pkg`** → the wizard lays down a self-contained
-environment and a **meshforge** app; launch it to open the Workbench (a native
-window over the local 127.0.0.1 web UI). See
-[`packaging/README.md`](packaging/README.md) for the full recipe.
-The FEA/CFD **solvers stay external and optional** (CalculiX/OpenFOAM/MYSTRAN,
-auto-discovered at runtime — not bundled); meshing, export, and the 3-D viewport
-work without them. The installer is unsigned — right-click → *Open* past
-Gatekeeper. **Linux** (`.sh`) and **Windows** (`.exe`) installers build from
-the same recipe via the manual-dispatch **"Linux installer"** / **"Windows
-installer"** GitHub Actions workflows (constructor can't cross-build; the
-unsigned `.exe` triggers a SmartScreen warning — "More info" → "Run anyway";
-details in [`packaging/README.md`](packaging/README.md)).
+## Run it
 
-## Use
+**With the copilot.** Set your own API key in your own shell; every run calls
+the Anthropic API and is billed to that key.
+
 ```bash
-meshforge import-cad drawing.dwg --list-blocks    # CAD → cleaned profile
-meshforge blocks outputs/drawing_profile.json     # profile → hex mesh
-meshforge synth y_junction                        # synthetic surfaces + truths
-meshforge volmesh outputs/torus.vtp --thickness 0.4
-meshforge deck tube.vtp --thickness 1 --E 1000 --nu 0.3 \
-    --fix inlet,3 --fix outlet,3 --pin-lateral --pressure inner,1 --target ccx
-meshforge solve outputs/tube_ccx.inp              # run CalculiX, read results back
-meshforge foam tube.vtp --thickness 1 --case outputs/tube_case   # OpenFOAM polyMesh
-meshforge cfd outputs/tube_case --nu 0.1 \
-    --inlet inlet=0,0,1 --outlet outlet=0         # run OpenFOAM, read U/p back
-meshforge run study.yaml                          # parameter sweep
-meshforge repair damaged.stl                      # surface clean-up
-meshforge replay outputs/session.mfwork --set volmesh.thickness=0.6
-meshforge web                                     # web Workbench (browser, 127.0.0.1)
-meshforge desktop                                 # same Workbench in a native window
-python -m pytest                                  # test suite
+read -s ANTHROPIC_API_KEY && export ANTHROPIC_API_KEY
+meshforge copilot "Assess this aneurysm at 140 and 120 mmHg" \
+    --ct ct.nii.gz --server http://127.0.0.1:8765 --flow-live \
+    --credit "TotalSegmentator dataset s1364 (Wasserthal et al.), CC BY 4.0"
 ```
 
-## Clinical data
+This starts the Workbench on that port, opens its window, runs the six steps
+while the tabs fill, and writes a report (`report.html`) built from the tool
+outputs. About ten minutes on an Apple-silicon laptop.
 
-**No patient data lives in this repository, and none ever has.** The cardiac
-`.cso` / DICOM inputs the pipeline was validated against are read-only files
-kept *outside* the repo tree; they are checksummed on sight and never copied in
-or committed. Cases are referred to only by pseudonymous
-study code (`VAM1`, `VAM997`, …) — never by a filename, because segmentation
-filenames carry patient initials and scan dates. The gated family tests locate
-that folder via `MESHFORGE_CSO_FAMILY_DIR` (or a git-ignored
-`tests/.local_family_dir`) and skip cleanly when it is absent, which is what CI
-does.
+**Without an API key.** The same six steps through the copilot's own tools,
+with the same quality gate and the same recovery, and no language model:
 
-meshforge is research-grade software: **not a medical device**, not cleared or
-approved by any regulatory body, and not for diagnosis or treatment.
+```bash
+python scripts/demo_run.py ct.nii.gz
+```
 
-## License
+**The page alone.** `meshforge web --port 8765`, then open
+`http://127.0.0.1:8765/app/`. The server binds 127.0.0.1 only.
 
-Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). You may
-use, modify, and redistribute it, including commercially, provided you keep the
-copyright and license notices and state your changes.
+## What the numbers are and are not
 
-## Security
+On the demo scan the run gives: sac maximum diameter 61.8 mm; the first wall fails
+the gate at 1.30 mm thick, the rebuilt wall passes at 1.50 mm (7,552
+hexahedra, none inverted); peak wall stress 282.5 kPa at 140 mmHg and
+242.1 kPa at 120 mmHg; strength index 0.43 (0.22 to 0.92) at 140 mmHg; a flow
+case of 6,748 cells that converges.
 
-Local, single-user, offline tool: the trust boundary is the **files you open**
-and the **output of external solvers**, both treated as untrusted and required
-to fail loudly rather than silently produce a plausible mesh. Threat model,
-private reporting route, and the two written audits (with the `file:line`
-closing every finding) are in [`SECURITY.md`](.github/SECURITY.md) and
-[`docs/security/`](docs/security/).
+They are the outputs of one model on one public scan, under stated
+assumptions: a uniform 1.5 mm wall (a CT does not show the wall's thickness),
+a linear solve on the imaged geometry, one steady resting flow, and wall
+strength from 13 lab-tested strips of 7 aneurysms.
 
-## Project docs
-- [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — first-run tutorial (install → mesh → solve → replay) · [`docs/APP_GUIDE.md`](docs/APP_GUIDE.md) — complete usage reference
-- [`CONTRIBUTING.md`](.github/CONTRIBUTING.md) — environment, tests, architecture rules · [`CHANGELOG.md`](CHANGELOG.md) — release history
-- [`SECURITY.md`](.github/SECURITY.md) — threat model + reporting · [`docs/security/`](docs/security/) — audit reports
-- [`docs/CSO_GUIDE.md`](docs/CSO_GUIDE.md) — cardiac `.cso` segmentation ingest, end to end
-- [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) — what the suite covers and what each backend gates
-- [`packaging/README.md`](packaging/README.md) — installer build recipe · [`CITATION.cff`](CITATION.cff) — how to cite
+They are not a diagnosis, not a statement about this person's health, and not
+clinically validated. The index is an investigational strength index. The
+language model computes none of them.
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+python -m pytest -q tests/test_copilot.py     # one file per process is the reliable way
+```
+
+Tests that need TotalSegmentator, CalculiX or OpenFOAM skip when the program
+is absent.
+
+## Credits
+
+- **Demo scan:** TotalSegmentator dataset, subject s1364. Wasserthal et al.,
+  doi 10.5281/zenodo.10047292, CC BY 4.0.
+- **Wall strength data:** Gomes VC et al., *Dataset on cadaveric human
+  abdominal aorta aneurysm biomechanics (uniaxial) and histology*, Mendeley
+  Data, version 3 (2020), doi 10.17632/x64srrc39p.3, CC BY 4.0. The packaged
+  table is derived from it; see
+  [`src/meshforge/data/STRENGTH_V0_SOURCES.md`](src/meshforge/data/STRENGTH_V0_SOURCES.md).
+- **Tools:** [TotalSegmentator](https://github.com/wasserth/TotalSegmentator)
+  (the aorta outline), [gmsh](https://gmsh.info) (tetrahedra for the thrombus
+  and the lumen), [CalculiX](https://www.calculix.de) (wall stress),
+  [OpenFOAM](https://www.openfoam.com) (blood flow) and
+  [vtk.js](https://kitware.github.io/vtk-js/) (the 3-D view).
+
+The general meshing toolkit of meshforge 1.x is not part of this edition. It
+remains available at the tag
+[`v1.0.0`](https://github.com/LeventS2005/meshforge/tree/v1.0.0).
+
+## Licence
+
+Apache-2.0 for the code ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE)). The
+packaged strength data are CC BY 4.0. To cite the software, see
+[`CITATION.cff`](CITATION.cff).

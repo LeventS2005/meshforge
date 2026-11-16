@@ -1,8 +1,9 @@
-"""meshforge — surfaces in, solver-ready wall volume meshes out.
+"""meshforge, demo edition: one CT of an aortic aneurysm from scan to wall
+stress and blood flow. Research software, not a medical device.
 
-GUI-agnostic core. All meshing/geometry logic lives here; any GUI only
-drives the service layer (pipeline.MeshingSession, later milestone).
+UI-agnostic core. All meshing/geometry/solve logic lives here; the web layer
+and the copilot only drive the service layer (pipeline.MeshingSession).
 """
 from __future__ import annotations
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

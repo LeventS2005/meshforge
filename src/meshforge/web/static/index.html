@@ -6,47 +6,19 @@
     <title>meshforge web — Workbench</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <!-- The page is always the demo layout: the "demo" class is static.
+       styles.css lays the six tabs out under body.demo; viewport.js reads it
+       for the idle turntable and the top-down reveal. No links, no fetch to
+       anywhere else: the app is 127.0.0.1-only and self-contained. -->
+  <body class="demo">
     <header id="topbar">
       <h1>meshforge <span class="sub">Workbench</span></h1>
-      <!-- Static, offline quick-start. No links, no fetch, no external
-           navigation (the app is 127.0.0.1-only and self-contained). -->
-      <details id="help" class="help">
-        <summary>Quick start</summary>
-        <div class="help-body">
-          <ol>
-            <li><b>source</b> — pick a shape → <b>Generate synth</b>, or type a
-              <b>surface path</b> → <b>Load surface</b>.</li>
-            <li><b>Run centerline</b> → <b>Run wall</b> → <b>Run volmesh</b>
-              (check <code>inverted 0</code>).</li>
-            <li>Analyze in the <b>solve</b> (FEA) or <b>cfd</b> panel.</li>
-            <li><b>Save work file</b> (<code>.mfwork</code>) → <b>Load</b> with
-              <i>replay</i> ticked to reproduce.</li>
-          </ol>
-          <p>Run step panels top-to-bottom; a step run before its input errors
-            loudly in the log (harmless — run the missing one). Full guide:
-            <code>docs/TUTORIAL.md</code> and <code>docs/APP_GUIDE.md</code>.</p>
-        </div>
-      </details>
     </header>
 
     <main id="workbench">
-      <!-- LEFT: scrollable source + per-step parameter panels (from /schema) -->
+      <!-- LEFT: the six demo steps as tabs; each tab is its step's own
+           parameter panel (generated from GET /schema) -->
       <section id="pane-left" class="pane" aria-label="steps">
-        <fieldset id="source-box" class="step-box">
-          <legend>source</legend>
-          <label class="knob">
-            <span class="knob-name">shape</span>
-            <select id="synth-shape"></select>
-          </label>
-          <button type="button" id="btn-synth" class="run">Generate synth</button>
-          <hr />
-          <label class="knob">
-            <span class="knob-name">surface path</span>
-            <input type="text" id="load-path" placeholder="path to a surface mesh" />
-          </label>
-          <button type="button" id="btn-load" class="run">Load surface</button>
-        </fieldset>
         <div id="step-panels"><!-- generated from GET /schema --></div>
       </section>
 
@@ -58,10 +30,29 @@
               <span>color by</span>
               <select id="vp-field"></select>
             </label>
-            <label class="vp-ctl" id="vp-overlay-ctl" hidden title="draw the raw source contours over the surface">
+            <label class="vp-ctl" id="vp-overlay-ctl" hidden title="draw the step's overlay lines (the segment centreline) over the surface">
               <input type="checkbox" id="vp-overlay" checked />
-              <span id="vp-overlay-name">contours</span>
+              <span id="vp-overlay-name">overlay</span>
             </label>
+            <label class="vp-ctl" id="vp-section-ctl" hidden title="show the flow on a section along the vessel centreline (the wall turns translucent)">
+              <input type="checkbox" id="vp-section" checked />
+              <span>flow section</span>
+            </label>
+            <label class="vp-ctl" id="vp-wall-ctl" hidden title="draw the vessel wall around the flow section (translucent)">
+              <input type="checkbox" id="vp-wall" />
+              <span>wall</span>
+            </label>
+            <label class="vp-ctl" id="vp-fit-ctl" hidden title="colour range = the flow inside the section (2nd-98th percentile), not the full range">
+              <input type="checkbox" id="vp-fit" checked />
+              <span>fit colours</span>
+            </label>
+            <!-- Switch the view between the wall-stress result and the CFD
+                 result the session holds (shown once it holds both); nothing
+                 computed. -->
+            <div class="vp-ctl vp-layer" id="vp-layer-ctl" hidden role="group" aria-label="shown result">
+              <button type="button" class="vp-layer-btn" data-layer="stress" aria-pressed="false" title="the finite-element wall stress">wall stress</button>
+              <button type="button" class="vp-layer-btn" data-layer="cfd" aria-pressed="false" title="the blood-flow (CFD) result">blood flow</button>
+            </div>
             <div id="vp-colorbar" class="vp-colorbar" hidden>
               <span id="vp-cb-min" class="vp-cb-lim">0</span>
               <span class="vp-cb-gradient" aria-hidden="true"></span>
@@ -72,6 +63,10 @@
           <div id="vtk-canvas" class="vtk-canvas">
             <p id="vp-empty" class="viewport-note">run a step to render its mesh</p>
           </div>
+          <!-- The running step with its elapsed seconds (from GET /state
+               `running`). A NEW result is drawn in from the top down by
+               viewport.js itself. -->
+          <div id="vp-busy" class="vp-busy" hidden aria-live="polite"></div>
           <div id="vp-anim" class="vp-anim" hidden>
             <button type="button" id="vp-play" class="run" title="play / pause">▶</button>
             <input type="range" id="vp-frame" min="0" max="0" value="0" step="1" aria-label="CFD time frame" />
@@ -85,8 +80,25 @@
         </div>
       </section>
 
-      <!-- RIGHT: docked session / log / history panels -->
-      <section id="pane-right" class="pane" aria-label="log and history">
+      <!-- RIGHT: docked atlas / twin / session / log panels -->
+      <section id="pane-right" class="pane" aria-label="atlas, twin, session and log">
+        <!-- Twin card (M6): the copilot report's header as a live panel. Filled
+             from GET /twin (the session's own step outputs); every slot waits
+             until its step has run. The body outline is the report's exact SVG. -->
+        <section id="twin-panel" class="dock-panel twin-panel" aria-label="your twin">
+          <h2 class="panel-title">your twin · v0 <span id="twin-scan" class="muted">no scan yet</span></h2>
+          <div id="twin" class="twin" data-lit="0">
+            <div class="twin-fig">
+              <svg class="tw-svg" viewBox="0 0 140 300" role="img" aria-label="body outline: the aorta is module 1; heart and kidneys come next"><circle class="tw-body" cx="70" cy="24" r="16"/><path class="tw-body" d="M76 38 L78 48 Q96 50 106 58 L112 96 L117 150 Q118 160 112 160 L109 152 L104 104 L100 74 L99 112 Q96 136 100 160 L97 226 L95 284 Q95 292 86 292 L80 292 L79 230 L73 170 Q70 166 67 170 L61 230 L60 292 L54 292 Q45 292 45 284 L43 226 L40 160 Q44 136 41 112 L40 74 L36 104 L31 152 L28 160 Q22 160 23 150 L28 96 L34 58 Q44 50 62 48 L64 38 Z"/><path class="tw-next" d="M81 86 C77 79 66 81 66 89 C66 97 75 102 81 108 C87 102 96 97 96 89 C96 81 85 79 81 86 Z"/><ellipse class="tw-next" cx="55" cy="126" rx="5.5" ry="9" transform="rotate(-12 55 126)"/><ellipse class="tw-next" cx="88" cy="123" rx="5.5" ry="9" transform="rotate(12 88 123)"/><g class="tw-aorta"><path d="M71 94 C69 78 71 66 77 66 C82 66 81 74 79 82 C77 92 74 104 74 132 L74 150"/><path d="M74 150 L66 172 M74 150 L82 172"/><ellipse cx="74" cy="140" rx="5.5" ry="9"/></g></svg>
+              <ul id="twin-modules" class="twin-modules">
+                <li class="mod">○ aorta · module 1</li><li class="mod">○ heart · next</li><li class="mod">○ kidneys · next</li>
+              </ul>
+            </div>
+            <ul id="twin-slots" class="twin-slots" aria-live="polite"><!-- from GET /twin --></ul>
+          </div>
+          <p class="twin-foot">investigational index — not a diagnosis</p>
+        </section>
+
         <section class="dock-panel">
           <h2 class="panel-title">session</h2>
           <div class="actions">
@@ -94,11 +106,13 @@
               <input type="text" id="save-path" placeholder="work file path (.mfwork)" />
               <button type="button" id="btn-save" class="run" disabled>Save work file</button>
             </div>
+            <p id="save-error" class="panel-error" hidden></p>
             <div class="action-row">
               <input type="text" id="wload-path" placeholder="work file to load" />
               <label class="inline"><input type="checkbox" id="wload-replay" checked /> replay</label>
               <button type="button" id="btn-wload" class="run">Load work file</button>
             </div>
+            <p id="wload-error" class="panel-error" hidden></p>
             <div class="action-row">
               <button type="button" id="btn-reset" class="reset">Reset session</button>
             </div>
@@ -109,16 +123,67 @@
           <h2 class="panel-title">log</h2>
           <pre id="log" class="log" aria-live="polite"></pre>
         </section>
-
-        <section class="dock-panel flush">
-          <h2 class="panel-title">history <span class="muted">journal — what a .mfwork replays</span></h2>
-          <table id="history" class="history">
-            <thead><tr><th>step</th><th>params</th><th>summary</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </section>
       </section>
     </main>
+
+
+    <!-- The patient atlas. An inert template; app.js clones it above the
+         twin panel when the page starts. One patient record, every study filed by body region and
+         modality: the body map is 15 regions, each its own path, filed by the
+         PATIENT's side (right = the viewer's left, as on a scan). Every study
+         row comes from GET /atlas — the scans the session really loaded, no
+         priors, no other patients, no dates. The region ids and names are
+         meshforge.atlas.REGIONS; the asset test pins the two. -->
+    <template id="atlas-svg">
+      <section id="atlas-panel" class="dock-panel atlas" data-modality="All" aria-label="patient atlas">
+        <h2 class="panel-title">patient atlas <span id="atlas-patient" class="muted">no patient loaded</span></h2>
+        <div class="atlas-body">
+          <div class="atlas-fig">
+            <!-- A front-view silhouette with natural lines (deltoids, tapered arms,
+                 waist and hips, thighs, calves, feet), 1 unit = 1 px at its drawn size
+                 (170 x 330). Exactly 15 regions, each its own path, ~2-unit gaps; the
+                 left side is the right side mirrored, so the patient's right is on the
+                 viewer's left. data-cx/cy: the badge and the hovered region's name
+                 label (drawn by app.js, kept inside the figure). -->
+            <svg class="atlas-svg" viewBox="0 0 170 330" role="group" aria-label="body map, front view, 15 regions; the patient's right is on the left">
+              <g class="atlas-regions">
+                <path class="atlas-region" data-region="head" tabindex="0" aria-label="Head and neck" role="button" data-cx="85" data-cy="26" d="M75 58 L76 45.4 A19 22 0 1 1 94 45.4 L95 58 Z"/>
+                <path class="atlas-region" data-region="chest" tabindex="0" aria-label="Chest" role="button" data-cx="85" data-cy="90" d="M57 60 C66 61 76 62 85 62 C94 62 104 61 113 60 C113.5 80 113.5 100 112 120 L58 120 C56.5 100 56.5 80 57 60 Z"/>
+                <path class="atlas-region" data-region="torso" tabindex="0" aria-label="Torso (abdomen and pelvis)" role="button" data-cx="85" data-cy="160" d="M58 122 L112 122 C111 135 109 145 110 155 C112 170 117 182 116 195 C116 199 114 202 112 202 L88 202 L85 196 L82 202 L58 202 C56 202 54 199 54 195 C53 182 58 170 60 155 C61 145 59 135 58 122 Z"/>
+                <path class="atlas-region" data-region="shoulder_r" tabindex="0" aria-label="Right shoulder" role="button" data-cx="40" data-cy="76" d="M54 60 C45 60 34 62 29 70 C25 76 25 86 27 93 L54 93 Z"/>
+                <path class="atlas-region" data-region="shoulder_l" tabindex="0" aria-label="Left shoulder" role="button" data-cx="130" data-cy="76" d="M116 60 C 125 60 136 62 141 70 C 145 76 145 86 143 93 L 116 93 Z"/>
+                <path class="atlas-region" data-region="arm_r" tabindex="0" aria-label="Right arm" role="button" data-cx="39" data-cy="148" d="M28 95 L52 95 C51 115 47 125 47 145 C47 165 49 185 50 202 L34 202 C33 185 29 165 27 145 C26 125 28 110 28 95 Z"/>
+                <path class="atlas-region" data-region="arm_l" tabindex="0" aria-label="Left arm" role="button" data-cx="131" data-cy="148" d="M142 95 L 118 95 C 119 115 123 125 123 145 C 123 165 121 185 120 202 L 136 202 C 137 185 141 165 143 145 C 144 125 142 110 142 95 Z"/>
+                <path class="atlas-region" data-region="hand_r" tabindex="0" aria-label="Right hand" role="button" data-cx="41" data-cy="218" d="M33 204 L49 204 C52 210 54 216 53 222 C52 230 45 233 39 232 C32 231 28 226 29 218 C29 212 31 208 33 204 Z"/>
+                <path class="atlas-region" data-region="hand_l" tabindex="0" aria-label="Left hand" role="button" data-cx="129" data-cy="218" d="M137 204 L 121 204 C 118 210 116 216 117 222 C 118 230 125 233 131 232 C 138 231 142 226 141 218 C 141 212 139 208 137 204 Z"/>
+                <path class="atlas-region" data-region="upper_leg_r" tabindex="0" aria-label="Right upper leg" role="button" data-cx="69" data-cy="231" d="M56 204 L83 204 C83 222 83 240 82 258 L60 258 C57 240 55 222 56 204 Z"/>
+                <path class="atlas-region" data-region="upper_leg_l" tabindex="0" aria-label="Left upper leg" role="button" data-cx="101" data-cy="231" d="M114 204 L 87 204 C 87 222 87 240 88 258 L 110 258 C 113 240 115 222 114 204 Z"/>
+                <path class="atlas-region" data-region="lower_leg_r" tabindex="0" aria-label="Right lower leg" role="button" data-cx="70" data-cy="283" d="M60 260 L82 260 C84 275 83 290 79 306 L64 306 C60 290 56 275 60 260 Z"/>
+                <path class="atlas-region" data-region="lower_leg_l" tabindex="0" aria-label="Left lower leg" role="button" data-cx="100" data-cy="283" d="M110 260 L 88 260 C 86 275 87 290 91 306 L 106 306 C 110 290 114 275 110 260 Z"/>
+                <path class="atlas-region" data-region="foot_r" tabindex="0" aria-label="Right foot" role="button" data-cx="63" data-cy="318" d="M63 308 L80 308 C81 316 81 324 79 328 L52 328 C47 328 45 325 46 321 C48 316 56 312 63 308 Z"/>
+                <path class="atlas-region" data-region="foot_l" tabindex="0" aria-label="Left foot" role="button" data-cx="107" data-cy="318" d="M107 308 L 90 308 C 89 316 89 324 91 328 L 118 328 C 123 328 125 325 124 321 C 122 316 114 312 107 308 Z"/>
+              </g>
+              <g class="atlas-badges" aria-hidden="true"><!-- count badges, from GET /atlas --></g>
+              <g class="atlas-labels" aria-hidden="true"><!-- the hovered region's name, on the figure --></g>
+            </svg>
+          </div>
+          <div class="atlas-side">
+            <div class="atlas-chips" role="group" aria-label="modality">
+              <button type="button" class="atlas-chip on" data-modality="All">All</button>
+              <button type="button" class="atlas-chip" data-modality="CT">CT</button>
+              <button type="button" class="atlas-chip" data-modality="MRI">MRI</button>
+              <button type="button" class="atlas-chip" data-modality="X-ray">X-ray</button>
+              <button type="button" class="atlas-chip" data-modality="US">US</button>
+              <button type="button" class="atlas-chip" data-modality="Angio">Angio</button>
+            </div>
+            <p id="atlas-hover" class="atlas-hover" aria-live="polite">hover a region</p>
+            <h3 class="atlas-list-title">studies · <span id="atlas-scope">all regions</span></h3>
+            <ul id="atlas-studies" class="atlas-studies" aria-live="polite"><!-- from GET /atlas --></ul>
+          </div>
+        </div>
+        <p id="atlas-caption" class="atlas-caption">atlas · regions without studies are dim · sides are the patient's</p>
+      </section>
+    </template>
 
     <!-- Status bar: the session's live state (source + artifact chips). -->
     <footer id="statusbar">

@@ -7,7 +7,6 @@ the CLI ``synth`` command and downstream tests.
 """
 from __future__ import annotations
 
-from meshforge.synth.branching import TREES, TreeTruth, generate_tree, y_junction
 from meshforge.synth.generators import (
     GENERATORS,
     AnalyticTruth,
@@ -31,10 +30,6 @@ from meshforge.synth.primitives import (
 )
 
 __all__ = [
-    "TREES",
-    "TreeTruth",
-    "generate_tree",
-    "y_junction",
     "GENERATORS",
     "PRIMITIVES",
     "AnalyticTruth",

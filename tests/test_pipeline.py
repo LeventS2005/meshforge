@@ -22,17 +22,6 @@ def test_session_full_pipeline_headless(synth_session: MeshingSession) -> None:
     assert "centerline" in r1.text
     assert r1.render_hints["kind"] == "polyline"
 
-    r2 = s.compute_sections(every=10)
-    assert r2.summary["n_sections"] > 10
-    assert r2.summary["constrictions"] == []
-
-    # Default wall mode is now SDF: `thickness` reports the REALIZED
-    # per-vertex distance to the level set, so approximate, not exact.
-    r3 = s.compute_wall(thickness=0.5)
-    assert r3.summary["thickness_min"] == pytest.approx(0.5, rel=0.05)
-    assert any("sdf offset" in n for n in r3.summary["notes"])
-    assert r3.render_hints["kind"] == "surface"
-
     r4 = s.compute_volmesh(backend="swept", thickness=0.5, n_axial=30)
     assert r4.summary["quality"]["n_inverted"] == 0
     assert r4.render_hints["kind"] == "volume"
@@ -61,10 +50,8 @@ def test_steps_fail_loudly_without_prerequisites() -> None:
     with pytest.raises(RuntimeError, match="no surface"):
         s.compute_centerline()
     s.generate_synth("straight_tube")
-    with pytest.raises(RuntimeError, match="no centerline"):
-        s.compute_sections()
-    with pytest.raises(RuntimeError, match="no wall"):
-        s.save("wall_outer", "anywhere.vtu")
+    with pytest.raises(RuntimeError, match="no volmesh"):
+        s.save("volmesh", "anywhere.vtu")
     with pytest.raises(ValueError, match="unknown save target"):
         s.save("banana", "x.vtu")
 

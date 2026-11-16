@@ -298,42 +298,6 @@ def test_session_save_foam_journaled(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# CLI
-
-
-def test_cli_foam_end_to_end(tmp_path):
-    from meshforge.cli import main
-    from meshforge.synth import generate
-
-    surface, _ = generate("straight_tube")
-    vtp = tmp_path / "tube.vtp"
-    surface.save(vtp)
-    case = tmp_path / "case"
-    rc = main([
-        "foam", str(vtp), "--thickness", "1.0", "--n-theta", "12",
-        "--n-axial", "4", "--n-layers", "2", "--case", str(case),
-        "--patch-type", "inner,symmetry",
-    ])
-    assert rc == 0
-    polymesh = case / "constant" / "polyMesh"
-    patches = _read_boundary(polymesh / "boundary")
-    assert patches["inner"]["type"] == "symmetry"
-    assert set(patches) == {"inner", "outer", "inlet", "outlet"}
-
-
-def test_cli_foam_error_paths(tmp_path, capsys):
-    from meshforge.cli import main
-
-    rc = main(["foam", str(tmp_path / "x.vtp")])
-    assert rc == 1
-    assert "either --thickness or --outer-surface" in capsys.readouterr().err
-    rc = main(["foam", str(tmp_path / "x.vtp"), "--thickness", "1",
-               "--patch-type", "oops"])
-    assert rc == 1
-    assert "NAME,TYPE" in capsys.readouterr().err
-
-
-# ---------------------------------------------------------------------------
 # checkMesh-gated validation (skips cleanly without OpenFOAM — trap #16)
 
 

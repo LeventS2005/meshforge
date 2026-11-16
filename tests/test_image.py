@@ -4,8 +4,6 @@ install-hint errors (deps absent HERE — full loader tests skip unless
 pydicom/nibabel exist), session + CLI e2e."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -142,8 +140,15 @@ def test_nifti_roundtrip_and_rotated_affine_refused(tmp_path):
     rot[0, 1] = 0.3
     bad = tmp_path / "rot.nii"
     nib.save(nib.Nifti1Image(vol, rot), str(bad))
-    with pytest.raises(ValueError, match="re-orient"):
+    # D83: load_volume's (spacing, origin) API still cannot express a
+    # rotated/sheared grid, so it refuses — but it now points at the
+    # affine-aware loader, which import_image uses and which maps it exactly.
+    with pytest.raises(ValueError, match="re-orient it first, or load it with load_volume_affine"):
         load_volume(bad)
+    from meshforge.io.image import load_volume_affine
+
+    _, affine, _ = load_volume_affine(bad)
+    np.testing.assert_allclose(affine, rot)
 
 
 def test_volume_input_sha256_file_and_dir(tmp_path):
@@ -160,61 +165,6 @@ def test_volume_input_sha256_file_and_dir(tmp_path):
     assert volume_input_sha256(d) != h2  # content change is detected
     with pytest.raises(FileNotFoundError):
         volume_input_sha256(tmp_path / "ghost")
-
-
-def test_session_import_image_and_replay(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    from meshforge.pipeline import MeshingSession, load_workfile, replay
-
-    npy = tmp_path / "sphere.npy"
-    np.save(npy, _sphere_volume())
-    session = MeshingSession()
-    with pytest.raises(ValueError, match="iso level"):
-        session.compute_import_image(path=str(npy))
-    result = session.compute_import_image(path=str(npy), level=0.0)
-    assert result.summary["image"]["watertight"] is True
-    assert session.surface is not None and session.input_sha256
-    assert session.journal[-1]["step"] == "import_image"
-
-    wf = session.save_workfile(tmp_path / "s.mfwork")
-    fresh = load_workfile(wf)
-    results = replay(fresh)
-    assert [r.step for r in results] == ["import_image"]
-    assert fresh.surface.n_cells == session.surface.n_cells
-
-    with pytest.raises(ValueError, match="spacing expects"):
-        session.compute_import_image(path=str(npy), level=0.0, spacing="1,2")
-
-
-def test_cli_import_image_e2e(tmp_path):
-    from meshforge.cli import main
-
-    npy = tmp_path / "sphere.npy"
-    np.save(npy, _sphere_volume())
-    outdir = tmp_path / "out"
-    rc = main([
-        "import-image", str(npy), "--level", "0",
-        "--spacing", "0.5,0.5,0.5", "--outputs", str(outdir),
-    ])
-    assert rc == 0
-    prov = json.loads((outdir / "sphere_image.json").read_text())
-    assert prov["check"]["mesh_ready"] is True
-    # spacing override scales the enclosed volume by 0.5^3.
-    assert prov["enclosed_volume"] == pytest.approx(
-        4 / 3 * np.pi * 8.0**3 / 8.0, rel=0.02
-    )
-    assert (outdir / "sphere_surface.vtp").is_file()
-
-
-def test_cli_import_image_error_paths(tmp_path, capsys):
-    from meshforge.cli import main
-
-    npy = tmp_path / "sphere.npy"
-    np.save(npy, _sphere_volume(n=16, r=5.0))
-    rc = main(["import-image", str(npy), "--level", "1e9",
-               "--outputs", str(tmp_path / "o")])
-    assert rc == 1
-    assert "outside the data range" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

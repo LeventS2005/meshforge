@@ -41,11 +41,6 @@ def local_data_dir(env_var: str, pointer_name: str) -> Path | None:
     return d if d.is_dir() else None
 
 
-def cso_family_dir() -> Path | None:
-    """Directory holding the real .cso family (env MESHFORGE_CSO_FAMILY_DIR)."""
-    return local_data_dir("MESHFORGE_CSO_FAMILY_DIR", ".local_family_dir")
-
-
 def dicom_dir() -> Path | None:
     """Directory holding the matching real .dcm volumes (env MESHFORGE_DICOM_DIR)."""
     return local_data_dir("MESHFORGE_DICOM_DIR", ".local_dicom_dir")

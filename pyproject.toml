@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshforge"
-version = "1.0.0"
-description = "Research-grade meshing toolkit: tubular/closed surfaces to solver-ready wall volume meshes"
+version = "2.0.0"
+description = "Demo edition: an AI copilot takes a CT of an aortic aneurysm from scan to wall stress and blood flow. Research software, not a medical device."
 requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering",
 ]
-# Known-good bands (V43, D65): lower bound = the API the code needs, upper
+# Known-good bands: lower bound = the API the code needs, upper
 # bound = the next major, EXCEPT the fragile numpy<->vtk pair which gets
 # tight minor caps: NumPy 2.5 deprecated assigning to ndarray.shape and
 # vtk<=9.6's numpy_support still does it on every conversion — the NumPy
@@ -24,7 +24,7 @@ classifiers = [
 # ships a fixed numpy_support (see [tool.pytest.ini_options] filterwarnings).
 # The conda env (environment.yml) stays the primary reproducible path.
 dependencies = [
-    "pyvista>=0.47,<1",  # 0.47 adds extract_surface(algorithm=...) — web/viewport.py + meshing/tet.py pass it
+    "pyvista>=0.47,<1",  # 0.47 adds extract_surface(algorithm=...) — web/viewport.py passes it
     "vtk>=9.3,<9.7",
     "meshio>=5,<6",
     "numpy>=1.26,<2.6",
@@ -34,53 +34,37 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# gmsh fills the thrombus and the blood lumen with tetrahedra.
 meshing = [
     "gmsh>=4.11,<5",
 ]
-# DWG additionally needs the external dwg2dxf converter (GNU LibreDWG).
-cad = [
-    "ezdxf>=1.0,<2",
-]
-recipes = [
-    "pyyaml>=6,<7",
-]
-# Image/biomedical ingest (V18/V38/V39): DICOM + NIfTI readers. Lazy-imported
-# — .npy volumes work without this extra; .dcm/.nii then degrade to a loud
-# install hint.
+# CT readers (NIfTI, DICOM). Lazy-imported: without this extra a .nii/.dcm
+# input degrades to a loud install hint.
 image = [
     "pydicom>=3,<4",
     "nibabel>=5,<6",
 ]
-# V35 local web app (roadmap v7). Pure-Python/wheel deps -> pip is fine (the
-# conda-forge rule is only for compiled GUI/web binaries). Lazy-imported so
-# the CLI/GUI don't pay for them. The trame/vtk.js viewport (increment 3)
-# installs separately from conda-forge.
+# The Claude copilot (`meshforge copilot`). Lazy-imported: nothing else needs
+# it; without it the copilot says how to install it.
+copilot = [
+    "anthropic>=1.15,<2",
+]
+# The local web app (the Workbench). Pure-Python/wheel deps, so pip is fine.
+# Lazy-imported so the CLI does not pay for them. httpx is what FastAPI's test
+# client needs.
 web = [
     "fastapi>=0.110,<1",
     "uvicorn[standard]>=0.29,<1",
-    "python-multipart>=0.0.9,<0.1",
     "httpx>=0.27,<1",
 ]
-# V35 increment 3: the interactive 3-D viewport. trame-vtk bundles vtk.js/web
-# assets (compiled GUI/web binaries) -> install from **conda-forge**, NOT pip
-# (same macOS rule as the `desktop` extra). Lazy-imported: the base web JSON
-# layer runs without it; the viewport then degrades to an "install this extra"
-# note.
+# The interactive 3-D viewport. trame-vtk bundles the vtk.js assets the page
+# loads. On macOS install it from conda-forge, NOT pip:
 #   conda install -n meshforge -c conda-forge trame-vtk trame-vuetify
+# Lazy-imported: the web JSON layer runs without it and the viewport then
+# degrades to an "install this extra" note.
 viewport = [
     "trame-vtk>=2.8,<3",
     "trame-vuetify>=3,<4",
-]
-# V35b desktop shell (the ONLY desktop UI since the Qt knob panels were retired,
-# D55): a native QtWebEngine window over the local web UI. On macOS install
-# PySide6 from conda-forge, NOT pip (a pip PySide6 bundles a second Qt beside
-# conda's qt6-main and hard-crashes, exit 134). The QtWebEngine **native** libs
-# are a separate conda-forge package (qt6-webengine, NOT a pip dist) — install it
-# to match qt6-main exactly. Needs the `web` (+ `viewport`) extras too, since the
-# shell serves that UI.
-#   conda install -n meshforge -c conda-forge qt6-webengine
-desktop = [
-    "PySide6>=6.6,<7",
 ]
 dev = [
     "pytest>=8,<10",
@@ -94,22 +78,17 @@ Issues = "https://github.com/LeventS2005/meshforge/issues"
 [project.scripts]
 meshforge = "meshforge.cli:main"
 meshforge-web = "meshforge.web.server:main"
-meshforge-desktop = "meshforge.gui.shell:main"
-
-[project.gui-scripts]
-# Back-compat alias: the Qt knob panels were retired (D55); meshforge-gui now
-# opens the desktop shell (the web Workbench in a native QtWebEngine window).
-meshforge-gui = "meshforge.gui.shell:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 # Ship the static Workbench (index.html/app.js/viewport.js/styles.css) as package
 # data — otherwise a real (non-editable) install has an empty web/static/ and the
-# web/desktop UI serves a blank page. Editable installs read it from src/ and hid
-# this gap until V37 packaging.
+# Workbench serves a blank page. Editable installs read it from src/.
 [tool.setuptools.package-data]
 "meshforge.web" = ["static/*"]
+# Tissue strength library v0 (CC BY 4.0 derived data + its attribution file).
+"meshforge.data" = ["*.csv", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

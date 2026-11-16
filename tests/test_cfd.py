@@ -17,25 +17,92 @@ from meshforge.solve.foam_case import (
 from meshforge.solve.foam_runner import find_foam, run_foam_app, solve_case
 
 # ---------------------------------------------------------------------------
-# fixtures: the fluid cylinder (projected disk, extruded) used throughout
+# fixtures: the fluid cylinder (O-grid disk, extruded) used throughout
 
 
 def _disk_wall(target_size: float, length: float, n_layers: int):
-    from meshforge.meshing import extrude_blocks, project_profile
+    """Fluid cylinder: the kept O-grid disk extruded along +z into hexes with
+    the named groups front (z=0), back (z=length), outer_rim, hole_rims.
+    (Test-local input builder; the library's block extruder is not part of
+    the demo edition.)"""
+    import pyvista as pv
 
-    theta = np.linspace(0, 2 * np.pi, 129)[:-1]
-    circle = np.column_stack([np.cos(theta), np.sin(theta)])  # R = 1, CCW
-    bm = project_profile([circle], target_size=target_size)
-    return extrude_blocks(bm, thickness=length, n_layers=n_layers)
-
-
-def _disk_wall_ogrid(target_size: float, length: float, n_layers: int):
-    from meshforge.meshing import extrude_blocks, ogrid_disk
+    from meshforge.meshing import BoundaryGroup, WallMesh, ogrid_disk
+    from meshforge.quality.volume import volume_quality
 
     theta = np.linspace(0, 2 * np.pi, 129)[:-1]
     circle = np.column_stack([np.cos(theta), np.sin(theta)])  # R = 1, CCW
     bm = ogrid_disk([circle], target_size=target_size)
-    return extrude_blocks(bm, thickness=length, n_layers=n_layers)
+
+    n2d = len(bm.points)
+    n_quads = len(bm.quads)
+    zs = np.linspace(0.0, length, n_layers + 1)
+    points = np.column_stack(
+        [
+            np.tile(bm.points[:, 0], n_layers + 1),
+            np.tile(bm.points[:, 1], n_layers + 1),
+            np.repeat(zs, n2d),
+        ]
+    )
+    hexes = np.empty((n_quads * n_layers, 8), dtype=np.int64)
+    for k in range(n_layers):
+        hexes[k * n_quads : (k + 1) * n_quads] = np.hstack(
+            [bm.quads + k * n2d, bm.quads + (k + 1) * n2d]
+        )
+    cells = np.column_stack([np.full(len(hexes), 8, dtype=np.int64), hexes]).ravel()
+    celltypes = np.full(len(hexes), pv.CellType.HEXAHEDRON, dtype=np.uint8)
+    grid = pv.UnstructuredGrid(cells, celltypes, points)
+    grid.cell_data["region"] = np.ones(grid.n_cells, dtype=np.int32)
+
+    edge_owner: dict[tuple[int, int], int] = {}
+    for qi, quad in enumerate(bm.quads):
+        for e in range(4):
+            a, b = int(quad[e]), int(quad[(e + 1) % 4])
+            edge_owner[(min(a, b), max(a, b))] = qi
+
+    def rim_group(name: str, edges: np.ndarray) -> BoundaryGroup:
+        cell_ids, face_nodes = [], []
+        for a, b in edges:
+            qi = edge_owner[(min(int(a), int(b)), max(int(a), int(b)))]
+            for k in range(n_layers):
+                cell_ids.append(k * n_quads + qi)
+                face_nodes.append(
+                    [
+                        int(a) + k * n2d,
+                        int(b) + k * n2d,
+                        int(b) + (k + 1) * n2d,
+                        int(a) + (k + 1) * n2d,
+                    ]
+                )
+        return BoundaryGroup(
+            name=name,
+            cell_ids=np.asarray(cell_ids, dtype=np.int64),
+            face_nodes=np.asarray(face_nodes, dtype=np.int64).reshape(-1, 4),
+        )
+
+    boundary = {
+        "front": BoundaryGroup(
+            name="front",
+            cell_ids=np.arange(n_quads, dtype=np.int64),
+            face_nodes=bm.quads[:, ::-1].copy(),  # outward -z
+        ),
+        "back": BoundaryGroup(
+            name="back",
+            cell_ids=np.arange(
+                (n_layers - 1) * n_quads, n_layers * n_quads, dtype=np.int64
+            ),
+            face_nodes=(bm.quads + n_layers * n2d).copy(),  # outward +z
+        ),
+        "outer_rim": rim_group("outer_rim", bm.edge_groups["outer_rim"]),
+        "hole_rims": rim_group("hole_rims", bm.edge_groups["hole_rims"]),
+    }
+    return WallMesh(
+        grid=grid,
+        boundary=boundary,
+        backend="ogrid-test",
+        quality=volume_quality(grid),
+        notes=list(bm.notes),
+    )
 
 
 def _pipe_spec(**overrides) -> CfdSpec:
@@ -237,7 +304,7 @@ needs_foam = pytest.mark.skipif(
 
 def _run_hagen_poiseuille(wall):
     """Solve the pipe case on the given fluid cylinder and assert the
-    exact-solution truths (shared by the projected and O-grid meshes)."""
+    exact-solution truths (run on the O-grid pipe)."""
     from meshforge.pipeline import MeshingSession
 
     session = MeshingSession()
@@ -278,22 +345,11 @@ def _run_hagen_poiseuille(wall):
 
 
 @needs_foam
-def test_hagen_poiseuille_benchmark():
-    """The Lamé of CFD: laminar pipe flow vs the exact solution.
-
-    R=1, L=10, nu=0.1, uniform inlet U=1 (Re=20, entry length ~2.9):
-    on the developed tail the centerline velocity is 2*U_mean and
-    dp/dz = -8*nu*U_mean/R^2 (kinematic). Tolerances hold ~2x margin
-    over the ts=0.15 probe errors (-2.3% / -1.2%)."""
-    _run_hagen_poiseuille(_disk_wall(0.15, 10.0, 50))
-
-
-@needs_foam
 def test_hagen_poiseuille_ogrid_benchmark():
     """V26: the same exact-solution truths on the O-grid pipe at ts=0.1
     — a resolution the projected disk cannot reach (V6 gate refuses,
     D37) — with sj_min 0.7071 instead of 0.0852."""
-    wall = _disk_wall_ogrid(0.1, 10.0, 50)
+    wall = _disk_wall(0.1, 10.0, 50)
     assert wall.quality.sj_min > 0.70
     _run_hagen_poiseuille(wall)
 
@@ -314,23 +370,6 @@ def test_icofoam_transient_smoke(tmp_path):
     assert result.latest_time == pytest.approx(0.2)
     assert result.u_max > 1.0  # profile already peaking above the mean
     assert (case / "log.icoFoam").is_file()
-
-
-@needs_foam
-def test_wedge_blayers_case_checkmesh_clean(tmp_path):
-    """Roadmap step 7: the V22 wedge boundary-layer polyMesh initialises
-    and passes checkMesh in-app."""
-    from meshforge.pipeline import MeshingSession
-    from meshforge.solve import check_mesh
-    from meshforge.synth import generate_primitive
-
-    session = MeshingSession()
-    session.surface, _truth = generate_primitive("solid_sphere", radius=2.0)
-    session.compute_blayers(first=0.1, n_layers=4, growth=1.3)
-    case = tmp_path / "wedge_case"
-    session.save("foam", case)
-    report = check_mesh(case)
-    assert report["ok"] is True
 
 
 @needs_foam

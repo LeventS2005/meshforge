@@ -117,12 +117,12 @@ def _patch_face_map(
     """Group the boundary faces (sorted-vertex keys) into named patches
     from the WallMesh boundary groups (winding-robust). Loud on faces
     claimed twice, stale group faces, and uncovered faces (unless
-    ``default_patch`` collects them deliberately). Shared by the
-    polyMesh (V14) and FLUENT .msh (V28) writers."""
+    ``default_patch`` collects them deliberately). Used by the
+    polyMesh writer (V14)."""
     # F1: WallMesh boundary-group names are already validated by the
     # BoundaryGroup constructor, but ``default_patch`` is minted at write
     # time and is NOT a BoundaryGroup — content-validate it here so it can
-    # never inject a forged patch into the polyMesh/FLUENT zone list.
+    # never inject a forged patch into the polyMesh patch list.
     if default_patch is not None:
         from meshforge.meshing.base import valid_group_name
 

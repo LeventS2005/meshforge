@@ -1,13 +1,11 @@
 """V3 geometry library: watertight primitives with exact/convergent truths."""
 from __future__ import annotations
 
-import json
 import math
 
 import numpy as np
 import pytest
 
-from meshforge.cli import main
 from meshforge.synth import PRIMITIVES, generate_primitive
 from meshforge.synth.primitives import (
     box,
@@ -164,22 +162,3 @@ def test_degenerate_primitive_params_loud() -> None:
         solid_sphere(n_phi=2)
     with pytest.raises(ValueError, match="unknown primitive"):
         generate_primitive("nope")
-
-
-def test_cli_synth_primitives(tmp_path, capsys) -> None:
-    out = tmp_path / "outputs"
-    rc = main(["synth", "box", "--set", "width=2", "--outputs", str(out)])
-    assert rc == 0
-    text = capsys.readouterr().out
-    assert "exact truth : True" in text
-    data = json.loads((out / "box_truth.json").read_text())
-    assert data["volume"] == pytest.approx(2 * 3 * 2)
-    assert (out / "box.vtp").is_file()
-
-    rc = main(["synth", "solid_sphere", "--outputs", str(out)])
-    assert rc == 0
-
-    rc = main(["synth", "definitely_not_a_shape", "--outputs", str(out)])
-    err = capsys.readouterr().err
-    assert rc == 1
-    assert "box" in err and "straight_tube" in err  # both registries listed
